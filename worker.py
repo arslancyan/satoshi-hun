@@ -29,7 +29,7 @@ POLL_SECONDS = max(5, int(os.environ.get("SATOSHI_HUNT_POLL_SECONDS", "10")))
 HEARTBEAT_SECONDS = max(10, int(os.environ.get("SATOSHI_HUNT_HEARTBEAT_SECONDS", "20")))
 
 
-def api_json(path, method="GET", payload=None):
+def api_json(path, method="GET", payload=None, request_id=""):
     if not API_BASE or not API_TOKEN:
         raise RuntimeError("SATOSHI_HUNT_API and SATOSHI_HUNT_TOKEN are required")
     parsed = urlparse(API_BASE)
@@ -39,8 +39,8 @@ def api_json(path, method="GET", payload=None):
         raise RuntimeError("Non-local worker API endpoints must use HTTPS")
     data = None if payload is None else json.dumps(payload).encode()
     headers = {"Authorization": "Worker " + API_TOKEN, "Content-Type": "application/json"}
-    if method != "GET":
-        headers["Idempotency-Key"] = str(uuid.uuid4())
+    if request_id:
+        headers["Idempotency-Key"] = request_id
     req = urllib.request.Request(
         API_BASE + path,
         data=data,
@@ -52,8 +52,9 @@ def api_json(path, method="GET", payload=None):
 
 
 def api_call(path, method="POST", payload=None):
+    request_id = str(uuid.uuid4()) if method != "GET" else ""
     try:
-        return api_json(path, method, payload)
+        return api_json(path, method, payload, request_id)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
         raise RuntimeError(f"API {exc.code}: {detail}") from exc
