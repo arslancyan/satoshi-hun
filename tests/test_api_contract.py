@@ -25,3 +25,9 @@ def test_untrusted_verified_claim_is_blocked_in_route_source():
     import inspect
     source = inspect.getsource(claim)
     assert 'VERIFIED claims require a server-side challenge adapter.' in source
+
+def test_assignment_state_transitions_use_rowcount_guards():
+    from backend.api import start_assignment, complete_assignment
+    import inspect
+    assert 'where id=%s and status=\'ASSIGNED\'' in inspect.getsource(start_assignment)
+    assert 'where id=%s and status=\'RUNNING\'' in inspect.getsource(complete_assignment)
