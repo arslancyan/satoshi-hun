@@ -28,6 +28,7 @@ Finish repository-side engineering, documentation, safety checks, and public-dem
 - Keep one active assignment per job as the default economic safety rule.
 - Keep network assignment and worker-hour caps configurable.
 - Keep idempotency on account and worker mutation endpoints.
+- Keep the Android/Termux mobile worker in safe transport mode by default, with explicit demo-only protocol activation.
 - Continue contract tests for allocation races, replay, checkpoint/resume, and claim uniqueness.
 
 ### 4. Frontend/demo readiness
