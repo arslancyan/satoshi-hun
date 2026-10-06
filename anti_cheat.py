@@ -43,3 +43,35 @@ def security_flags(claim_count, duplicate_count, rejected_count, stale_count):
     if stale_count > max(5, claim_count * 0.2):
         flags.append("HIGH_STALE_RATE")
     return flags
+
+
+def reputation_score(claim_count, verified_count, rejected_count, stale_count, completed_count, total_seconds):
+    """Return a conservative 0-100 worker score from server-observed activity.
+
+    Unproven client claims never increase the score. Negative signals are
+    weighted more strongly than positive signals, and small samples remain
+    close to the neutral baseline.
+    """
+    claim_count=max(0,int(claim_count))
+    verified_count=max(0,int(verified_count))
+    rejected_count=max(0,int(rejected_count))
+    stale_count=max(0,int(stale_count))
+    completed_count=max(0,int(completed_count))
+    total_seconds=max(0,int(total_seconds))
+
+    positive=verified_count*4 + completed_count*1.0 + min(total_seconds/3600.0,1000)*0.01
+    negative=rejected_count*6 + stale_count*4
+    raw=50.0 + positive - negative
+
+    flags=security_flags(claim_count, max(0, claim_count-verified_count-rejected_count), rejected_count, stale_count)
+    if "HIGH_DUPLICATE_RATE" in flags:
+        raw -= 10
+    if "HIGH_REJECTION_RATE" in flags:
+        raw -= 15
+    if "HIGH_STALE_RATE" in flags:
+        raw -= 10
+
+    # Do not let a tiny sample create an extreme reputation.
+    sample=min(1.0, claim_count/20.0)
+    score=50.0 + (raw-50.0)*sample
+    return round(max(0.0,min(100.0,score)),2)
