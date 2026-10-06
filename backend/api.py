@@ -452,6 +452,27 @@ def public_job_audit(job_id: UUID):
             "audit_events":[{"event_type":e[0],"entity_type":e[1],"entity_id":e[2],"worker_id":str(e[3]) if e[3] else None,"payload":e[4],"previous_hash":e[5],"event_hash":e[6],"created_at":e[7]} for e in events]}
 
 
+@app.get("/audit/job/{job_id}/verify")
+def verify_job_audit(job_id: UUID):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select event_type,entity_type,entity_id,account_id,worker_id,payload,previous_hash,event_hash from audit_events where (entity_type='job' and entity_id=%s) or (entity_type='assignment' and entity_id in (select id::text from job_assignments where job_id=%s)) order by created_at asc,id asc", (str(job_id), job_id))
+            events=cur.fetchall()
+    previous=None
+    for e in events:
+        canonical=json.dumps({
+            "event_type":e[0],"entity_type":e[1],"entity_id":e[2],
+            "account_id":str(e[3]) if e[3] else None,
+            "worker_id":str(e[4]) if e[4] else None,
+            "payload":e[5],"previous_hash":previous,
+        }, sort_keys=True, separators=(",", ":"), default=str).encode()
+        expected=hashlib.sha256(canonical).hexdigest()
+        if e[6] != previous or e[7] != expected:
+            return {"valid":False,"events_checked":events.index(e)+1,"reason":"audit-chain-integrity-failure"}
+        previous=e[7]
+    return {"valid":True,"events_checked":len(events),"head_hash":previous}
+
+
 @app.get("/audit/account")
 def audit_account(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
