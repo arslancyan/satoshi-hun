@@ -108,3 +108,20 @@ create index if not exists idx_workers_account on workers(account_id);
 create index if not exists idx_jobs_puzzle on jobs(puzzle_id);
 create index if not exists idx_claims_worker on work_claims(worker_id);
 create index if not exists idx_reward_events_account on reward_events(account_id);
+
+
+create table if not exists audit_events (
+  id uuid primary key,
+  event_type text not null,
+  entity_type text not null,
+  entity_id text not null,
+  account_id uuid references accounts(id) on delete set null,
+  worker_id uuid references workers(id) on delete set null,
+  payload jsonb not null default '{}'::jsonb,
+  previous_hash text,
+  event_hash text not null unique,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_audit_events_entity on audit_events(entity_type,entity_id,created_at);
+create index if not exists idx_audit_events_account on audit_events(account_id,created_at);
