@@ -2259,15 +2259,18 @@ def payout_worker_next(request: Request):
         with conn.cursor() as cur:
             cur.execute("select pg_advisory_xact_lock(58392017)")
             cur.execute(
-                "select id,account_id,amount_btc,payout_address,status from withdrawal_requests "
-                "where status='QUEUED' or (status='PROCESSING' and processed_at is null and created_at < now() - (%s || ' minutes')::interval) "
-                "order by created_at asc limit 1 for update skip locked",
+                "select w.id,w.account_id,w.amount_btc,w.payout_address,w.status,ps.id,ps.status,ps.unsigned_psbt,ps.signed_psbt,ps.signed_tx_hex "
+                "from withdrawal_requests w left join payout_settlements ps on ps.withdrawal_id=w.id "
+                "where (w.status='QUEUED' and ps.id is null) "
+                "or (w.status='PROCESSING' and w.processed_at is null and w.created_at < now() - (%s || ' minutes')::interval "
+                "and (ps.id is null or ps.status in ('PSBT_REQUESTED','PSBT_READY','SIGNED'))) "
+                "order by w.created_at asc limit 1 for update skip locked",
                 (PAYOUT_RETRY_AFTER_MINUTES,),
             )
             row=cur.fetchone()
             if not row:
                 return {"withdrawal":None}
-            wid,account_id,amount,address,status=row
+            wid,account_id,amount,address,status,existing_settlement_id,existing_settlement_status,existing_unsigned_psbt,existing_signed_psbt,existing_signed_tx_hex=row
             amount=Decimal(str(amount))
             if amount > MAX_SINGLE_PAYOUT_BTC:
                 record_audit_event(cur,"WITHDRAWAL_BLOCKED","withdrawal",wid,account_id,
@@ -2290,20 +2293,28 @@ def payout_worker_next(request: Request):
             )
             if cur.rowcount != 1:
                 return {"withdrawal":None}
-            settlement_id=uuid4()
-            cur.execute(
-                "insert into payout_settlements(id,withdrawal_id,wallet_id,amount_btc,destination_btc_address,status) "
-                "values(%s,%s,%s,%s,%s,'PSBT_REQUESTED') on conflict(withdrawal_id) do update set updated_at=now() "
-                "returning id,status",
-                (settlement_id,wid,TREASURY_WALLET_ID,amount,address),
-            )
-            settlement_row=cur.fetchone()
-            settlement_id=settlement_row[0]
-            cur.execute("update withdrawal_requests set settlement_id=%s where id=%s",(settlement_id,wid))
-            cur.execute(
-                "insert into payout_settlement_events(id,settlement_id,event_type,metadata) values(%s,%s,'PSBT_REQUESTED',%s::jsonb)",
-                (uuid4(),settlement_id,json.dumps({"amount_btc":str(amount),"destination_btc_address":address})),
-            )
+            settlement_id=existing_settlement_id
+            settlement_status=existing_settlement_status
+            if settlement_id is None:
+                settlement_id=uuid4()
+                cur.execute(
+                    "insert into payout_settlements(id,withdrawal_id,wallet_id,amount_btc,destination_btc_address,status) "
+                    "values(%s,%s,%s,%s,%s,'PSBT_REQUESTED')",
+                    (settlement_id,wid,TREASURY_WALLET_ID,amount,address),
+                )
+                settlement_status="PSBT_REQUESTED"
+                cur.execute("update withdrawal_requests set settlement_id=%s where id=%s",(settlement_id,wid))
+                cur.execute(
+                    "insert into payout_settlement_events(id,settlement_id,event_type,metadata) values(%s,%s,'PSBT_REQUESTED',%s::jsonb)",
+                    (uuid4(),settlement_id,json.dumps({"amount_btc":str(amount),"destination_btc_address":address})),
+                )
+            else:
+                # Resume the existing safe-to-retry settlement instead of creating
+                # a second payout intent for the same withdrawal.
+                cur.execute(
+                    "insert into payout_settlement_events(id,settlement_id,event_type,metadata) values(%s,%s,'SETTLEMENT_RESUMED',%s::jsonb)",
+                    (uuid4(),settlement_id,json.dumps({"status":settlement_status})),
+                )
             record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",wid,account_id,
                 payload={"amount_btc":str(amount),"payout_address_present":True,
                          "settlement_id":str(settlement_id),"rail":"PSBT",
@@ -2311,7 +2322,9 @@ def payout_worker_next(request: Request):
                          "custody":"central_treasury"})
             return {"withdrawal":{"id":str(wid),"account_id":str(account_id),"amount_btc":float(amount),
                                   "payout_address":address,"status":"PROCESSING","settlement_id":str(settlement_id),
-                                  "settlement_status":"PSBT_REQUESTED","idempotency_key":str(wid)}}
+                                  "settlement_status":settlement_status,"unsigned_psbt":existing_unsigned_psbt,
+                                  "signed_psbt":existing_signed_psbt,"final_tx_hex":existing_signed_tx_hex,
+                                  "idempotency_key":str(wid)}}
 
 
 @app.post("/internal/payouts/{withdrawal_id}/complete")
