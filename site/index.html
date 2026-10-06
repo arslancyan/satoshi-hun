@@ -73,7 +73,13 @@ async function loadMarketplace(){
   try{
     const d=await fetch(API_BASE+"/marketplace/challenges").then(r=>r.json());
     const el=document.getElementById("marketplaceList");
-    el.innerHTML=(d.offers||[]).map(o=>'<div><b>'+String(o.title)+'</b> · '+String(o.challenge_type)+' · '+String(o.reward_btc)+' BTC · '+String(o.status)+'</div>').join('')||'<div>No published offers.</div>';
+    el.replaceChildren();
+    for(const o of (d.offers||[])){
+      const row=document.createElement("div");
+      row.textContent=String(o.title)+" · "+String(o.challenge_type)+" · "+String(o.reward_btc)+" BTC · "+String(o.status);
+      el.appendChild(row);
+    }
+    if(!(d.offers||[]).length) el.textContent="No published offers.";
   }catch(e){}
 }
 async function loadAuditExplorer(){
@@ -81,7 +87,13 @@ async function loadAuditExplorer(){
   try{
     const d=await fetch(API_BASE+"/audit/explorer?limit=20").then(r=>r.json());
     const el=document.getElementById("auditList");
-    el.innerHTML=(d.events||[]).map(x=>'<div><b>'+String(x.event_type)+'</b> · '+String(x.entity_type)+' · '+String(x.created_at)+'</div>').join('')||'<div>No audit events.</div>';
+    el.replaceChildren();
+    for(const x of (d.events||[])){
+      const row=document.createElement("div");
+      row.textContent=String(x.event_type)+" · "+String(x.entity_type)+" · "+String(x.created_at);
+      el.appendChild(row);
+    }
+    if(!(d.events||[]).length) el.textContent="No audit events.";
   }catch(e){}
 }
 async function loadLiveNetwork(){
