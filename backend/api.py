@@ -1133,7 +1133,11 @@ def assign_job(job_id: UUID, body: AssignmentCreate, request: Request, account_i
             capacity = economic_capacity(cur, job_id)
             if not capacity["allowed"]:
                 raise HTTPException(429, f"Allocation paused: {capacity['reason']}")
-            if not worker_owned(cur, body.worker_id, account_id):
+            cur.execute(
+                "select id from workers where id=%s and account_id=%s and status='ACTIVE' for update",
+                (body.worker_id, account_id),
+            )
+            if not cur.fetchone():
                 raise HTTPException(400, "Selected worker is not active or does not belong to this account")
             cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING') for update", (job_id,))
             if cur.fetchone():
