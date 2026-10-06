@@ -1,5 +1,6 @@
 import os
 import hashlib
+import json
 import secrets
 import time
 from collections import defaultdict, deque
@@ -73,6 +74,28 @@ def db():
     if not DATABASE_URL:
         raise HTTPException(503, "DATABASE_URL is not configured")
     return psycopg.connect(DATABASE_URL)
+
+
+def record_audit_event(cur, event_type, entity_type, entity_id, account_id=None, worker_id=None, payload=None):
+    payload = payload or {}
+    cur.execute("select event_hash from audit_events order by created_at desc, id desc limit 1")
+    previous = cur.fetchone()
+    previous_hash = previous[0] if previous else None
+    canonical = json.dumps({
+        "event_type": event_type,
+        "entity_type": entity_type,
+        "entity_id": str(entity_id),
+        "account_id": str(account_id) if account_id else None,
+        "worker_id": str(worker_id) if worker_id else None,
+        "payload": payload,
+        "previous_hash": previous_hash,
+    }, sort_keys=True, separators=(",", ":"), default=str).encode()
+    event_hash = hashlib.sha256(canonical).hexdigest()
+    cur.execute(
+        "insert into audit_events(id,event_type,entity_type,entity_id,account_id,worker_id,payload,previous_hash,event_hash) values(%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)",
+        (uuid4(), event_type, entity_type, str(entity_id), account_id, worker_id, json.dumps(payload, default=str), previous_hash, event_hash),
+    )
+    return event_hash
 
 
 def issue_session(account_id: UUID) -> str:
@@ -337,6 +360,7 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
             if row[3]!="ASSIGNED": raise HTTPException(409,f"Assignment is {row[3]}")
             cur.execute("update job_assignments set status='RUNNING',started_at=%s,last_heartbeat_at=%s where id=%s",(now,now,assignment_id))
             cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'",(row[1],))
+            record_audit_event(cur,"STARTED","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
     return {"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
 
 
@@ -351,6 +375,7 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id:
             if row[3]!="RUNNING": raise HTTPException(409,f"Assignment is {row[3]}")
             cur.execute("update job_assignments set last_heartbeat_at=%s where id=%s",(now,assignment_id))
             cur.execute("update workers set last_seen_at=%s where id=%s",(now,row[2]))
+            record_audit_event(cur,"HEARTBEAT","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
     return {"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
 
 
@@ -368,6 +393,7 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
             cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s",(now,now,seconds,assignment_id))
             cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
             cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
+            record_audit_event(cur,"COMPLETED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"contribution_seconds":seconds})
     return {"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
 
 
@@ -394,6 +420,7 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
             except psycopg.errors.UniqueViolation:
                 conn.rollback()
                 return {"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
+            record_audit_event(cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,payload={"assignment_id":str(body.assignment_id),"candidate_hash":body.candidate_hash,"result_status":body.result_status})
             if body.result_status == "VERIFIED":
                 cur.execute(
                     "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) "
