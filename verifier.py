@@ -92,3 +92,21 @@ def verify_candidate(record, candidate):
         return VerificationResult(False, "Verifier returned an invalid result.", candidate_hash).as_dict()
 
     return VerificationResult(result, "Verified by registered public-challenge adapter." if result else "Candidate rejected by challenge adapter.", candidate_hash).as_dict()
+
+
+class HashCommitmentAdapter(ChallengeAdapter):
+    """Reference adapter for public challenges whose published verification
+    rule is an exact candidate-hash commitment.
+
+    It never receives private keys or wallet credentials. Production adapters
+    must be challenge-specific and independently reviewed.
+    """
+    challenge_type = "hash-commitment"
+
+    def verify(self, record, candidate_hash):
+        expected = str(record.get("verification", {}).get("expected_candidate_hash", "")).lower()
+        supplied = str(candidate_hash).lower()
+        return bool(expected) and supplied == expected
+
+
+register_adapter(HashCommitmentAdapter())
