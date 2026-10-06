@@ -293,6 +293,17 @@ def checkpoint(assignment_id: UUID, body: CheckpointCreate, request: Request, wo
             row=cur.fetchone()
             if not row or row[2] not in ("ASSIGNED","RUNNING"):
                 raise HTTPException(409,"Assignment is not active")
+            cur.execute(
+                "select cursor_start,cursor_end,cursor_next from job_checkpoints "
+                "where assignment_id=%s order by created_at desc,id desc limit 1 for update",
+                (assignment_id,),
+            )
+            previous_checkpoint=cur.fetchone()
+            if previous_checkpoint:
+                if body.cursor_start != previous_checkpoint[0] or body.cursor_end != previous_checkpoint[1]:
+                    raise HTTPException(409, "Checkpoint range changed for this assignment")
+                if body.cursor_next <= previous_checkpoint[2]:
+                    raise HTTPException(409, "Checkpoint cursor must advance monotonically")
             digest=proof_hash(row[0],assignment_id,body.cursor_start,body.cursor_end,body.cursor_next,body.nonce)
             cur.execute(
                 "insert into job_checkpoints(id,job_id,assignment_id,cursor_start,cursor_end,cursor_next,checkpoint_hash) values(%s,%s,%s,%s,%s,%s,%s)",
@@ -317,12 +328,14 @@ def resume_assignment(assignment_id: UUID, request: Request, worker_id: UUID = D
             if replay is not None:
                 return replay
             cur.execute(
-                "select job_id,status from job_assignments where id=%s and worker_id=%s",
+                "select job_id,status from job_assignments where id=%s and worker_id=%s for update",
                 (assignment_id,worker_id),
             )
             row=cur.fetchone()
             if not row: raise HTTPException(404,"Assignment not found")
-            cur.execute("select cursor_next from job_checkpoints where assignment_id=%s order by created_at desc limit 1",(assignment_id,))
+            if row[1] not in ("ASSIGNED","RUNNING"):
+                raise HTTPException(409, "Assignment is no longer resumable")
+            cur.execute("select cursor_next from job_checkpoints where assignment_id=%s order by created_at desc,id desc limit 1",(assignment_id,))
             cp=cur.fetchone()
             response={"assignment_id":str(assignment_id),"status":row[1],"resume_cursor":cp[0] if cp else None}
             worker_idempotency_store(cur, worker_id, request, payload, response)
