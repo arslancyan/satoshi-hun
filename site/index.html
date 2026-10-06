@@ -172,7 +172,7 @@ a{color:#55ff7a!important;text-shadow:0 0 10px rgba(0,255,94,.18)}
 <section class="hero"><div><span class="eyebrow">LIGHTWEIGHT CONTROL CENTER</span><h1>Find. Classify. Solve. Verify.</h1><p>Public reward-puzzle dashboard paired with a lightweight local CPU worker. The browser stays light; computation happens locally when available.</p></div><div class="hero-card"><div class="small">WORKER</div><strong id="workerMode">Not connected</strong><span id="workerMeta">Run worker.py locally to connect.</span></div></section>
 <section class="panel" id="marketplacePanel"><div class="panel-head"><div><h2>Challenge Marketplace</h2><span>Public offers and verified challenge metadata</span></div><button class="filters button" onclick="loadMarketplace()">REFRESH</button></div><div id="marketplaceList" class="safe"><div>Connect the backend to load published offers.</div></div></section>
 <section class="panel" id="auditPanel"><div class="panel-head"><div><h2>Public Audit Explorer</h2><span>Tamper-evident protocol events</span></div><button class="filters button" onclick="loadAuditExplorer()">REFRESH</button></div><div id="auditList" class="safe"><div>Connect the backend to load audit events.</div></div></section>
-<section class="panel" id="livePanel" style="margin-top:18px;border-color:#24344a;background:linear-gradient(145deg,#101722,#0d1118)"><div class="small">LIVE NETWORK</div><div id="liveMetrics" style="margin-top:8px;color:#9ca9bb;font-size:12px">Backend telemetry unavailable — demo mode.</div></section><section class="panel" style="margin-top:18px;border-color:#493b1d;background:linear-gradient(145deg,#17150f,#0d1118)"><div class="small" style="color:#d8b86a">DEMO DATA</div><div style="margin-top:6px;color:#b7c0cc;font-size:12px;line-height:1.5">The registry shown here is simulated UI data for testing. It is not a live reward source and must not be treated as a real funded challenge.</div></section>
+<section class="panel collapsible is-collapsed" id="livePanel" style="margin-top:18px;border-color:#24344a;background:linear-gradient(145deg,#101722,#0d1118)"><div class="panel-head compact-summary" role="button" tabindex="0" aria-expanded="false"><div><h2>Live network</h2><span>Backend telemetry and network activity</span></div></div><div class="panel-body"><div id="liveMetrics" style="margin-top:8px;color:#9ca9bb;font-size:12px">Backend telemetry unavailable — demo mode.</div></div></section><section class="panel collapsible is-collapsed" style="margin-top:18px;border-color:#493b1d;background:linear-gradient(145deg,#17150f,#0d1118)"><div class="panel-head compact-summary" role="button" tabindex="0" aria-expanded="false"><div><h2>Demo data</h2><span>Important: examples only, funding currently paused</span></div></div><div class="panel-body"><div style="margin-top:6px;color:#b7c0cc;font-size:12px;line-height:1.5">The registry shown here is simulated UI data for testing. It is not a live reward source and must not be treated as a real funded challenge.</div></div></section>
 <section class="panel"><div class="panel-head"><div><h2>Trust &amp; contribution layer</h2><span>Inspired by the strongest patterns found in distributed-computing networks</span></div></div>
 <div class="trust-grid">
 <div class="trust-card"><b>VERIFIED SCOPE</b><span>Only explicitly public reward challenges can enter the production queue.</span></div>
@@ -272,18 +272,7 @@ async function loadRegistry(){try{const r=await fetch("puzzles.json",{cache:"no-
 (function(){
   const alwaysOpen=new Set(["Available challenges","What can I work on?"]);
   const compact=document.querySelectorAll(".app > section.panel");
-  compact.forEach(panel=>{
-    const head=panel.querySelector(":scope > .panel-head");
-    const title=head?.querySelector("h2")?.textContent?.trim();
-    if(!head||!title||alwaysOpen.has(title)) return;
-    const body=document.createElement("div");
-    body.className="panel-body";
-    while(head.nextSibling) body.appendChild(head.nextSibling);
-    panel.appendChild(body);
-    panel.classList.add("collapsible","is-collapsed");
-    head.setAttribute("role","button");
-    head.setAttribute("tabindex","0");
-    head.setAttribute("aria-expanded","false");
+  const wire=(panel,head)=>{
     const toggle=()=>{
       const collapsed=panel.classList.toggle("is-collapsed");
       head.setAttribute("aria-expanded",String(!collapsed));
@@ -292,6 +281,27 @@ async function loadRegistry(){try{const r=await fetch("puzzles.json",{cache:"no-
     head.addEventListener("keydown",e=>{
       if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}
     });
+  };
+  compact.forEach(panel=>{
+    const head=panel.querySelector(":scope > .panel-head");
+    const title=head?.querySelector("h2")?.textContent?.trim();
+    if(!head||!title||alwaysOpen.has(title)||panel.classList.contains("collapsible")) return;
+    const body=document.createElement("div");
+    body.className="panel-body";
+    while(head.nextSibling) body.appendChild(head.nextSibling);
+    panel.appendChild(body);
+    panel.classList.add("collapsible","is-collapsed");
+    head.setAttribute("role","button");
+    head.setAttribute("tabindex","0");
+    head.setAttribute("aria-expanded","false");
+    wire(panel,head);
+  });
+  document.querySelectorAll(".panel.collapsible").forEach(panel=>{
+    if(panel.dataset.wired==="1") return;
+    const head=panel.querySelector(":scope > .panel-head");
+    if(!head) return;
+    panel.dataset.wired="1";
+    wire(panel,head);
   });
 })();
 </script></body></html>
