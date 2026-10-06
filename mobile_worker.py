@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Satoshi Hunt mobile-friendly opt-in API worker.
+
+Designed for Android/Termux and other lightweight devices. This worker:
+- uses HTTPS API mode only (no local WebSocket/UI dependency);
+- polls for server assignments with an adaptive, battery-friendly interval;
+- sends worker heartbeats while idle/active;
+- resumes server-owned assignments after temporary connectivity loss;
+- never handles private keys, seed phrases, wallet credentials, or private challenges.
+
+The worker intentionally performs only the public-reward-challenge protocol.
+Challenge-specific solving belongs in an approved adapter.
+"""
+import json
+import os
+import random
+import time
+import urllib.error
+import urllib.request
+from urllib.parse import urlparse
+
+API_BASE = os.environ.get("SATOSHI_HUNT_API", "").rstrip("/")
+API_TOKEN = os.environ.get("SATOSHI_HUNT_TOKEN", "")
+WORKER_ID = os.environ.get("SATOSHI_HUNT_WORKER_ID", "")
+POLL_IDLE = max(15, int(os.environ.get("SATOSHI_HUNT_MOBILE_POLL_SECONDS", "30")))
+POLL_ACTIVE = max(5, int(os.environ.get("SATOSHI_HUNT_MOBILE_ACTIVE_POLL_SECONDS", "10")))
+HEARTBEAT_SECONDS = max(20, int(os.environ.get("SATOSHI_HUNT_MOBILE_HEARTBEAT_SECONDS", "30")))
+MAX_BACKOFF = max(60, int(os.environ.get("SATOSHI_HUNT_MOBILE_MAX_BACKOFF_SECONDS", "300")))
+RUN_ONCE = os.environ.get("SATOSHI_HUNT_MOBILE_RUN_ONCE", "").lower() in ("1", "true", "yes")
+
+
+def validate_config():
+    if not API_BASE or not API_TOKEN or not WORKER_ID:
+        raise SystemExit(
+            "Set SATOSHI_HUNT_API, SATOSHI_HUNT_TOKEN and SATOSHI_HUNT_WORKER_ID."
+        )
+    parsed = urlparse(API_BASE)
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise SystemExit("Mobile worker requires an HTTPS SATOSHI_HUNT_API endpoint.")
+
+
+def api_json(path, method="GET", payload=None):
+    data = None if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(
+        API_BASE + path,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": "Worker " + API_TOKEN,
+            "Content-Type": "application/json",
+            "User-Agent": "SatoshiHunt-MobileWorker/1.0",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=20) as response:  # nosec B310
+        return json.loads(response.read().decode())
+
+
+def api_call(path, method="POST", payload=None):
+    try:
+        return api_json(path, method, payload)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")
+        raise RuntimeError(f"API {exc.code}: {detail}") from exc
+
+
+def assignments():
+    result = api_json(f"/workers/{WORKER_ID}/assignments")
+    if not isinstance(result, list):
+        raise RuntimeError("Unexpected assignment response")
+    return result
+
+
+def active_assignment(items):
+    return next(
+        (item for item in items if item.get("status") in ("ASSIGNED", "RUNNING")),
+        None,
+    )
+
+
+def work_assignment(item):
+    assignment_id = item["id"]
+    job_id = item["job_id"]
+    puzzle_id = item.get("puzzle_id", "?")
+
+    if item.get("status") == "ASSIGNED":
+        api_call(f"/assignments/{assignment_id}/start")
+        print(f"[#{puzzle_id}] started")
+
+    # A server-owned assignment is resumable: reconnecting simply re-reads
+    # the assignment state instead of creating a second assignment locally.
+    last_heartbeat = 0.0
+    started = time.monotonic()
+
+    # This is deliberately a bounded protocol placeholder. A production
+    # challenge adapter should replace this section with the challenge's
+    # published, server-verifiable computation.
+    for progress in range(0, 101, 10):
+        now = time.monotonic()
+        if now - last_heartbeat >= HEARTBEAT_SECONDS:
+            api_call(f"/assignments/{assignment_id}/heartbeat")
+            last_heartbeat = now
+        print(f"[#{puzzle_id}] mobile public-challenge pass {progress}%")
+        if progress < 100:
+            time.sleep(1)
+
+    # Do not claim a fabricated solution. The mobile worker reports a
+    # framework marker only; challenge-specific adapters must provide the
+    # actual candidate.
+    print(
+        f"[#{puzzle_id}] adapter required; assignment remains server-auditable "
+        f"(job {job_id}, elapsed {int(time.monotonic() - started)}s)"
+    )
+
+
+def run():
+    validate_config()
+    print("Satoshi Hunt Mobile Worker — explicit opt-in mode")
+    print("API:", API_BASE)
+    print("Worker:", WORKER_ID)
+    print("Battery-friendly polling:", POLL_IDLE, "s idle /", POLL_ACTIVE, "s active")
+
+    backoff = POLL_IDLE
+    last_heartbeat = 0.0
+
+    while True:
+        try:
+            items = assignments()
+            current = active_assignment(items)
+            now = time.monotonic()
+
+            if current:
+                backoff = POLL_ACTIVE
+                if now - last_heartbeat >= HEARTBEAT_SECONDS:
+                    api_call(f"/workers/{WORKER_ID}/heartbeat")
+                    last_heartbeat = now
+                work_assignment(current)
+                if RUN_ONCE:
+                    return
+                backoff = POLL_IDLE
+            else:
+                if now - last_heartbeat >= HEARTBEAT_SECONDS:
+                    api_call(f"/workers/{WORKER_ID}/heartbeat")
+                    last_heartbeat = now
+                print("[idle] no assignment; sleeping", POLL_IDLE, "s")
+                if RUN_ONCE:
+                    return
+
+            # Small jitter avoids synchronized polling when several phones
+            # start together.
+            time.sleep(backoff + random.uniform(0, min(5, backoff * 0.1)))
+            backoff = POLL_IDLE
+
+        except KeyboardInterrupt:
+            print("\nStopped by user.")
+            return
+        except Exception as exc:
+            print("[network]", exc)
+            print("[network] retrying in", backoff, "s")
+            time.sleep(backoff)
+            backoff = min(MAX_BACKOFF, max(POLL_ACTIVE, backoff * 2))
+
+
+if __name__ == "__main__":
+    run()
