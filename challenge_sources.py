@@ -162,6 +162,22 @@ def _is_custodial(puzzle):
     )
 
 
+
+def _counts_toward_prize(item):
+    label = str(item.get("label", "")).lower()
+    excluded = (
+        "not counted as prize",
+        "not part of the live prize",
+        "not part of live prize",
+        "certification reference",
+        "reference sibling",
+        "demo card",
+        "creator controlled",
+        "solved by a third party",
+        "swept",
+    )
+    return not any(marker in label for marker in excluded)
+
 def _escrows(puzzle):
     return [
         x
@@ -220,9 +236,13 @@ class OpenCryptoPuzzlesAdapter:
                             "live_checked_at": _now(),
                         }
                     )
-                    # A catalog address marked swept is retained for evidence,
-                    # but does not contribute to the live prize.
-                    if item.get("verified_state") != "swept":
+                    # Only explicitly prize-bearing escrows count. Addresses
+                    # described by the source as references, creator-controlled,
+                    # demos, solved/swept, or otherwise outside the live prize
+                    # are retained for audit evidence but never inflate reward.
+                    counts_toward_prize = _counts_toward_prize(item) and expected_sats is not None and expected_sats > 0
+                    live_addresses[-1]["counts_toward_prize"] = counts_toward_prize
+                    if counts_toward_prize:
                         total_sats += live_sats
                 except Exception as exc:
                     address_errors.append(
@@ -256,6 +276,7 @@ class OpenCryptoPuzzlesAdapter:
                 "advertised_reward_btc": published_sats / 100_000_000,
                 "verified_balance_btc": balance_btc,
                 "funding_match": funding_match,
+                "counted_escrow_sats": total_sats,
                 "funding_delta_btc": (total_sats - published_sats) / 100_000_000,
                 "confirmed_only": True,
                 "verification_stale": False,
