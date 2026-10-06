@@ -1,0 +1,15 @@
+name: production-smoke
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run production API smoke checks
+        env:
+          SATOSHI_HUNT_API: https://satoshi-hunt-api-production.up.railway.app
+          SATOSHI_HUNT_FRONTEND_ORIGIN: https://arslancyan.github.io
+        run: python3 tools/production_smoke.py
