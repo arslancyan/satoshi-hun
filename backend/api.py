@@ -352,7 +352,7 @@ def expire_stale_assignments(cur):
 
 
 def assignment_for_worker(cur, assignment_id: UUID, worker_id: UUID):
-    cur.execute("select id,job_id,worker_id,status,started_at from job_assignments where id=%s and worker_id=%s", (assignment_id, worker_id))
+    cur.execute("select id,job_id,worker_id,status,started_at from job_assignments where id=%s and worker_id=%s for update", (assignment_id, worker_id))
     return cur.fetchone()
 
 
@@ -371,7 +371,9 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
             row=assignment_for_worker(cur,assignment_id,token_worker_id)
             if not row: raise HTTPException(404,"Assignment not found")
             if row[3]!="ASSIGNED": raise HTTPException(409,f"Assignment is {row[3]}")
-            cur.execute("update job_assignments set status='RUNNING',started_at=%s,last_heartbeat_at=%s where id=%s",(now,now,assignment_id))
+            cur.execute("update job_assignments set status='RUNNING',started_at=%s,last_heartbeat_at=%s where id=%s and status='ASSIGNED'",(now,now,assignment_id))
+            if cur.rowcount != 1:
+                raise HTTPException(409, "Assignment changed before start")
             cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'",(row[1],))
             record_audit_event(cur,"STARTED","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
     return {"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
@@ -409,7 +411,9 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
             account_id=account_row[0]
             cur.execute("select extract(epoch from (%s-started_at))::bigint from job_assignments where id=%s",(now,assignment_id))
             seconds=max(0,int(cur.fetchone()[0] or 0))
-            cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s",(now,now,seconds,assignment_id))
+            cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s and status='RUNNING'",(now,now,seconds,assignment_id))
+            if cur.rowcount != 1:
+                raise HTTPException(409, "Assignment changed before completion")
             cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
             cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
             record_audit_event(cur,"COMPLETED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"contribution_seconds":seconds})
