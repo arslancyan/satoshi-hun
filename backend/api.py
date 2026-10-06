@@ -1376,7 +1376,11 @@ def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(accoun
                     "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",
                     (job_id,),
                 )
+                if claimant_account != account_id:
+                    raise HTTPException(403, "Verified claim account mismatch")
                 event = build_reward_event(account_id, job[1], job[4])
+                if Decimal(str(event["worker_share_btc"])) + Decimal(str(event["platform_fee_btc"])) != Decimal(str(event["gross_reward_btc"])):
+                    raise HTTPException(500, "Reward split integrity check failed")
                 cur.execute(
                     "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id) "
                     "values(%s,%s,%s,%s,%s,%s,'REVIEW',%s) "
