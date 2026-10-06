@@ -22,6 +22,7 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "")
 SESSION_TTL = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
 ASSIGNMENT_TIMEOUT_SECONDS = max(30, int(os.environ.get("ASSIGNMENT_TIMEOUT_SECONDS", "120")))
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "")
+CHALLENGE_INGESTION_KEY = os.environ.get("CHALLENGE_INGESTION_KEY", "")
 RATE_LIMIT_REDIS_URL = os.environ.get("RATE_LIMIT_REDIS_URL", "")
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
@@ -134,6 +135,18 @@ class VerifyRequest(BaseModel):
 
 class WorkerCreate(BaseModel):
     label: str = Field(default="worker", min_length=1, max_length=80)
+
+
+class ChallengeIngest(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=200)
+    challenge_type: str = Field(min_length=1, max_length=80)
+    reward_btc: float = Field(gt=0)
+    balance_btc: float = Field(ge=0)
+    status: str
+    rules: str = "public-reward-challenge"
+    provenance: dict
+    verification: dict
 
 
 class JobCreate(BaseModel):
@@ -307,12 +320,40 @@ def get_job(job_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
     return {"id":str(row[0]),"puzzle_id":row[1],"scope":row[2],"status":row[3],"created_at":row[4],"completed_at":row[5],"assignments":[{"id":str(a[0]),"worker_id":str(a[1]),"status":a[2],"assigned_at":a[3],"started_at":a[4],"completed_at":a[5],"last_heartbeat_at":a[6],"contribution_seconds":a[7]} for a in assignments]}
 
 
+@app.post("/internal/challenges")
+def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingestion_key: str = Header(default="")):
+    enforce_rate_limit(request, "write")
+    if not CHALLENGE_INGESTION_KEY:
+        raise HTTPException(503, "Challenge ingestion is not configured")
+    if not secrets.compare_digest(x_challenge_ingestion_key, CHALLENGE_INGESTION_KEY):
+        raise HTTPException(401, "Invalid challenge ingestion credential")
+    if body.status != "OPEN + FUNDED" or body.balance_btc <= 0:
+        raise HTTPException(400, "Only OPEN + FUNDED challenges may enter the solver queue")
+    if body.rules != "public-reward-challenge" or not body.provenance or not body.verification:
+        raise HTTPException(400, "Challenge provenance and verification metadata are required")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "insert into challenge_registry(id,title,challenge_type,reward_btc,balance_btc,status,rules,provenance,verification) "
+                "values(%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "on conflict (id) do update set title=excluded.title,challenge_type=excluded.challenge_type,"
+                "reward_btc=excluded.reward_btc,balance_btc=excluded.balance_btc,status=excluded.status,rules=excluded.rules,"
+                "provenance=excluded.provenance,verification=excluded.verification,updated_at=now()",
+                (body.id,body.title,body.challenge_type,body.reward_btc,body.balance_btc,body.status,body.rules,body.provenance,body.verification),
+            )
+            job_id=uuid4()
+            cur.execute(
+                "insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED')",
+                (job_id,body.id),
+            )
+            record_audit_event(cur,"CHALLENGE_INGESTED","challenge",body.id,payload={"job_id":str(job_id),"verification_fingerprint":body.verification.get("fingerprint")})
+    return {"challenge_id":body.id,"job_id":str(job_id),"status":"QUEUED"}
+
+
 @app.post("/jobs")
 def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
-    if body.scope != "public-reward-challenge":
-        raise HTTPException(400, "Only public-reward-challenge jobs are allowed")
-    raise HTTPException(501, "Jobs can only be created by the verified challenge-ingestion pipeline.")
+    raise HTTPException(403, "Jobs are created only by the verified challenge-ingestion pipeline.")
 
 
 @app.post("/jobs/{job_id}/assign")
