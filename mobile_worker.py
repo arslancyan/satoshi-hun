@@ -42,9 +42,8 @@ def validate_config():
         raise SystemExit("Mobile worker requires an HTTPS SATOSHI_HUNT_API endpoint.")
 
 
-def api_json(path, method="GET", payload=None):
+def api_json(path, method="GET", payload=None, request_id=""):
     data = None if payload is None else json.dumps(payload).encode()
-    request_id = str(uuid.uuid4()) if method != "GET" else ""
     headers = {"Authorization": "Worker " + API_TOKEN, "Content-Type": "application/json"}
     if request_id:
         headers["Idempotency-Key"] = request_id
@@ -59,8 +58,9 @@ def api_json(path, method="GET", payload=None):
 
 
 def api_call(path, method="POST", payload=None):
+    request_id = str(uuid.uuid4()) if method != "GET" else ""
     try:
-        return api_json(path, method, payload)
+        return api_json(path, method, payload, request_id)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
         raise RuntimeError(f"API {exc.code}: {detail}") from exc
