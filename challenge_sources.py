@@ -222,6 +222,7 @@ class OpenCryptoPuzzlesAdapter:
 
     def __init__(self):
         self.btc = BitcoinEsploraAdapter()
+        self.mempool = BitcoinEsploraAdapter(MEMPOOL_EXPLORER_BASE)
         self.eth = EthereumJsonRpcAdapter()
 
     def discover(self):
