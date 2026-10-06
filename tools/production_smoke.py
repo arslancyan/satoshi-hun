@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Production smoke checks for Satoshi Hunt public API."""
-import json, os, sys, urllib.request, urllib.error
+import json, os, sys, subprocess, urllib.request, urllib.error
 
 BASE = os.environ.get("SATOSHI_HUNT_API", "https://satoshi-hunt-api-production.up.railway.app").rstrip("/")
 ORIGIN = os.environ.get("SATOSHI_HUNT_FRONTEND_ORIGIN", "https://arslancyan.github.io")
@@ -32,8 +32,27 @@ s,h,b=request("/ready")
 ok &= check("readiness", s==200 and b.get("ready") is True and b.get("database") is True and b.get("redis") is True, f"{s} {b}")
 s,h,b=request("/marketplace/challenges")
 ok &= check("unauthenticated marketplace denied", s==401, f"{s} {b}")
-s,h,b=request("/auth/login","OPTIONS",headers={"Origin":ORIGIN,"Access-Control-Request-Method":"POST","Access-Control-Request-Headers":"content-type"})
-cors = h.get("Access-Control-Allow-Origin")==ORIGIN and "POST" in h.get("Access-Control-Allow-Methods","")
+curl = subprocess.run(
+    ["curl", "-sS", "-i", "-X", "OPTIONS", BASE + "/auth/login",
+     "-H", f"Origin: {ORIGIN}",
+     "-H", "Access-Control-Request-Method: POST",
+     "-H", "Access-Control-Request-Headers: content-type"],
+    capture_output=True, text=True, timeout=15, check=False,
+)
+curl_headers = {}
+for line in curl.stdout.splitlines():
+    if ":" in line:
+        key, value = line.split(":", 1)
+        curl_headers[key.strip().lower()] = value.strip()
+cors = (
+    curl.returncode == 0
+    and curl_headers.get("access-control-allow-origin") == ORIGIN
+    and "POST" in curl_headers.get("access-control-allow-methods", "")
+)
+s = 200 if curl.returncode == 0 else 0
+h = curl_headers
+b = {}
+
 ok &= check("GitHub Pages CORS preflight", cors, f"{s} origin={h.get('Access-Control-Allow-Origin','missing')} methods={h.get('Access-Control-Allow-Methods','missing')}")
 s,h,b=request("/account/payout-address","PUT",{"btc_payout_address":"not-a-bitcoin-address"})
 ok &= check("invalid wallet rejected", s in (401,422), f"{s} {b}")
