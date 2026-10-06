@@ -660,7 +660,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                     idempotency_store(cur,account_id,request,payload,response)
                     return response
                 cur.execute(
-                    "update job_assignments set status='PAUSED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
+                    "update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
                     (old_assignment_id,),
                 )
                 cur.execute(
@@ -673,7 +673,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                     (old_job_id,old_job_id),
                 )
                 record_audit_event(
-                    cur,"PAUSED","assignment",old_assignment_id,account_id,old_worker_id,
+                    cur,"RELEASED","assignment",old_assignment_id,account_id,old_worker_id,
                     {"job_id":str(old_job_id),"puzzle_id":old_puzzle_id,
                      "reason":"account_switched_puzzle","next_challenge_id":challenge_id},
                 )
@@ -682,7 +682,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             cur.execute(
                 """select a.id,a.job_id from job_assignments a
                    join jobs j on j.id=a.job_id
-                   where a.worker_id=%s and j.puzzle_id=%s and a.status='PAUSED'
+                   where a.worker_id=%s and j.puzzle_id=%s and a.status='RELEASED'
                    order by a.assigned_at desc limit 1 for update""",
                 (body.worker_id,challenge_id),
             )
@@ -1146,7 +1146,7 @@ def worker_heartbeat(worker_id: UUID, request: Request, token_worker_id: UUID = 
 def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("select j.id,j.puzzle_id,j.status,j.created_at,j.completed_at,a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,a.last_heartbeat_at,a.verified_seconds from jobs j left join job_assignments a on a.job_id=j.id and a.status in ('ASSIGNED','RUNNING','PAUSED') where j.scope='public-reward-challenge' order by j.created_at desc limit 50")
+            cur.execute("select j.id,j.puzzle_id,j.status,j.created_at,j.completed_at,a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,a.last_heartbeat_at,a.verified_seconds from jobs j left join job_assignments a on a.job_id=j.id and a.status in ('ASSIGNED','RUNNING','RELEASED') where j.scope='public-reward-challenge' order by j.created_at desc limit 50")
             rows = cur.fetchall()
     return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4],"assignment":None if r[5] is None else {"id":str(r[5]),"worker_id":str(r[6]),"status":r[7],"assigned_at":r[8],"started_at":r[9],"completed_at":r[10],"last_heartbeat_at":r[11],"contribution_seconds":r[12]}} for r in rows]
 
@@ -1529,8 +1529,8 @@ def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = De
                      and not exists (select 1 from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING'))""",
                 (row[1],row[1]),
             )
-            record_audit_event(cur,"PAUSED","assignment",assignment_id,account_id,row[2],payload={**payload,"reason":"account_requested"})
-            response={"assignment_id":str(assignment_id),"status":"PAUSED","stopped_at":now}
+            record_audit_event(cur,"RELEASED","assignment",assignment_id,account_id,row[2],payload={**payload,"reason":"account_requested"})
+            response={"assignment_id":str(assignment_id),"status":"RELEASED","stopped_at":now}
     return response
 
 @app.post("/assignments/{assignment_id}/heartbeat")
