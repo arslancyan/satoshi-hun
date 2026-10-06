@@ -28,6 +28,9 @@ FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "")
 CHALLENGE_INGESTION_KEY = os.environ.get("CHALLENGE_INGESTION_KEY", "")
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "").strip().lower()
 RATE_LIMIT_REDIS_URL = os.environ.get("RATE_LIMIT_REDIS_URL", "")
+MAX_ACTIVE_ASSIGNMENTS = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS", "100")))
+MAX_ACTIVE_ASSIGNMENTS_PER_JOB = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS_PER_JOB", "1")))
+MAX_NETWORK_WORKER_HOURS_PER_DAY = max(1, int(os.environ.get("MAX_NETWORK_WORKER_HOURS_PER_DAY", "10000")))
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.0")
@@ -985,6 +988,26 @@ def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(acc
     raise HTTPException(403, "Jobs are created only by the verified challenge-ingestion pipeline.")
 
 
+
+def economic_capacity(cur, job_id: UUID):
+    cur.execute("select count(*) from job_assignments where status in ('ASSIGNED','RUNNING')")
+    active_assignments = cur.fetchone()[0]
+    if active_assignments >= MAX_ACTIVE_ASSIGNMENTS:
+        return {"allowed": False, "reason": "NETWORK_ASSIGNMENT_CAP"}
+    cur.execute("select count(*) from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')", (job_id,))
+    if cur.fetchone()[0] >= MAX_ACTIVE_ASSIGNMENTS_PER_JOB:
+        return {"allowed": False, "reason": "JOB_ASSIGNMENT_CAP"}
+    cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where period_start=current_date")
+    daily_hours = int(cur.fetchone()[0] or 0) / 3600
+    if daily_hours >= MAX_NETWORK_WORKER_HOURS_PER_DAY:
+        return {"allowed": False, "reason": "DAILY_WORKER_HOUR_CAP"}
+    cur.execute("select c.balance_btc,c.status from jobs j join challenge_registry c on c.id=j.puzzle_id where j.id=%s for update", (job_id,))
+    challenge = cur.fetchone()
+    if not challenge or challenge[1] != "OPEN + FUNDED" or challenge[0] <= 0:
+        return {"allowed": False, "reason": "CHALLENGE_NOT_FUNDED"}
+    return {"allowed": True}
+
+
 @app.post("/jobs/{job_id}/assign")
 def assign_job(job_id: UUID, body: AssignmentCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
@@ -998,6 +1021,9 @@ def assign_job(job_id: UUID, body: AssignmentCreate, request: Request, account_i
                 raise HTTPException(404, "Job not found")
             if job[1] != "QUEUED":
                 raise HTTPException(409, f"Job is not assignable from {job[1]} state")
+            capacity = economic_capacity(cur, job_id)
+            if not capacity["allowed"]:
+                raise HTTPException(429, f"Allocation paused: {capacity['reason']}")
             if not worker_owned(cur, body.worker_id, account_id):
                 raise HTTPException(400, "Selected worker is not active or does not belong to this account")
             cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING') for update", (job_id,))
@@ -1192,6 +1218,35 @@ def verify_job_audit(job_id: UUID):
             valid_events += 1
         previous=e[7]
     return {"valid":True,"events_checked":valid_events,"head_hash":previous}
+
+@app.get("/network/economics")
+def network_economics():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from workers where status='ACTIVE'")
+            active_workers = cur.fetchone()[0]
+            cur.execute("select count(*) from job_assignments where status in ('ASSIGNED','RUNNING')")
+            active_assignments = cur.fetchone()[0]
+            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where period_start=current_date")
+            daily_seconds = int(cur.fetchone()[0] or 0)
+            cur.execute("select count(*) from jobs where status='QUEUED' and scope='public-reward-challenge'")
+            queued_jobs = cur.fetchone()[0]
+            cur.execute("select count(*) from challenge_registry where status='OPEN + FUNDED' and balance_btc > 0")
+            funded_challenges = cur.fetchone()[0]
+    return {
+        "active_workers": active_workers,
+        "active_assignments": active_assignments,
+        "daily_worker_hours": round(daily_seconds / 3600, 4),
+        "queued_jobs": queued_jobs,
+        "funded_challenges": funded_challenges,
+        "allocation_policy": {
+            "max_active_assignments": MAX_ACTIVE_ASSIGNMENTS,
+            "max_active_assignments_per_job": MAX_ACTIVE_ASSIGNMENTS_PER_JOB,
+            "max_network_worker_hours_per_day": MAX_NETWORK_WORKER_HOURS_PER_DAY,
+            "compute_location": "worker_device",
+            "platform_compute_payout_obligation": "none_without_verified_reward"
+        }
+    }
 
 @app.get("/audit/account")
 def audit_account(account_id: UUID = Depends(account_id_from_auth)):
