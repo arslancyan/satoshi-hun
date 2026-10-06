@@ -638,6 +638,9 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             else:
                 job_id=uuid4()
                 cur.execute("insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED')",(job_id,challenge_id))
+            # Serialize puzzle switching per account so two simultaneous RUN requests
+            # cannot both observe zero active assignments and create two active puzzles.
+            cur.execute("select pg_advisory_xact_lock(hashtext(%s))",(str(account_id),))
             # One active puzzle per account. Switching puzzles pauses the previous assignment.
             cur.execute(
                 """select a.id,a.job_id,a.worker_id,a.status,j.puzzle_id
