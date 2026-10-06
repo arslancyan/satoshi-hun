@@ -126,6 +126,8 @@ def account_id_from_auth(authorization: str = Header(default="")) -> UUID:
             raise HTTPException(503, "JWT_SECRET is not configured")
         payload = jwt.decode(authorization[7:], JWT_SECRET, algorithms=["HS256"])
         return UUID(payload["sub"])
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(401, "Invalid or expired session")
 
