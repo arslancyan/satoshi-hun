@@ -321,6 +321,7 @@ create table if not exists payout_settlements (
   amount_btc numeric(20,8) not null check (amount_btc > 0),
   destination_btc_address text not null,
   unsigned_psbt text,
+  signed_psbt text,
   signed_tx_hex text,
   txid text,
   signer_id text,
