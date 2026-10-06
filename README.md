@@ -35,3 +35,13 @@ This project is not an ordinary Bitcoin wallet/private-key cracker. It is scoped
 
 ## Registry integrity
 Run `python audit.py` before loading a registry. The audit rejects duplicate IDs, contradictory funded/empty states, and balances larger than recorded rewards.
+
+## Account, worker and reward model
+- Each user account uses email login and registers a BTC payout address.
+- One account may attach multiple opt-in worker devices.
+- Work attribution is account + device + job based.
+- A global work ledger must deduplicate previously tested candidates so failed work is not reassigned.
+- The platform success fee is 15% of a verified reward; the worker account receives the remaining 85%.
+- The platform fee is accounted separately from user rewards.
+- Community distribution is **owner-only and manual**: when the owner elects to allocate part of the owner's own 15% pool, eligible accounts receive shares based on verified worker-hours. Other users' 15% fees are never included in this pool.
+- Reward settlement remains reviewable/auditable; private keys are never collected or stored.
