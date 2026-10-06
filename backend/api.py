@@ -160,7 +160,7 @@ class ClaimCreate(BaseModel):
     assignment_id: UUID
     worker_id: UUID
     candidate_hash: str = Field(min_length=32, max_length=128)
-    result_status: str = Field(default="TESTED", pattern="^(TESTED|VERIFIED|REJECTED)$")
+    result_status: str = Field(default="TESTED", pattern="^(TESTED|REJECTED)$")
     cpu_seconds: int = Field(default=0, ge=0, le=86400)
 
 
