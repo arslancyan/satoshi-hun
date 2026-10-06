@@ -60,7 +60,8 @@ A real challenge adapter must be added separately for each public reward challen
 - `GET /workers`
 - `POST /workers/{worker_id}/heartbeat`
 - `GET /workers/{worker_id}/assignments`
-- `POST /jobs`
+- `POST /internal/challenges` (server-to-server ingestion; requires `X-Challenge-Ingestion-Key`)
+- `POST /jobs` (intentionally blocked for direct user creation)
 - `GET /jobs`
 - `GET /jobs/{job_id}`
 - `POST /jobs/{job_id}/assign`
@@ -73,4 +74,4 @@ A real challenge adapter must be added separately for each public reward challen
 Job state is intentionally separate from solution verification:
 `QUEUED → RUNNING → COMPLETED`, while a challenge-specific verified result moves a job to `VERIFIED`.
 
-The API only creates jobs for the `public-reward-challenge` scope and deduplicates candidate hashes per job.
+The API only creates jobs for the `public-reward-challenge` scope. Challenge ingestion requires complete provenance/verification metadata and is idempotent for active jobs. Candidate hashes are deduplicated per job.
