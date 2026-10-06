@@ -107,11 +107,13 @@ def work_assignment(item):
     # the assignment state instead of creating a second assignment locally.
     last_heartbeat = 0.0
     started = time.monotonic()
+    start_cursor = min(100, int(resume_cursor or 0) + 1)
+    checkpoints = sorted(set(range(start_cursor, 101, 10)) | {100}) if start_cursor <= 100 else []
 
     # Bounded beta protocol placeholder. A production challenge adapter must
     # replace the marker with the published challenge computation and its
     # independently verifiable candidate.
-    for progress in range(0, 101, 10):
+    for progress in checkpoints:
         now = time.monotonic()
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
             api_call(f"/assignments/{assignment_id}/heartbeat")
@@ -122,7 +124,7 @@ def work_assignment(item):
             {
                 "cursor_start": 0,
                 "cursor_end": 100,
-                "cursor_next": progress + 1,
+                "cursor_next": progress,
                 "nonce": f"mobile-demo-{progress}",
             },
         )
