@@ -48,7 +48,10 @@ A real challenge adapter must be added separately for each public reward challen
 - Email delivery is intentionally not bundled; production deployment should connect an email provider for magic-link delivery.
 - Reward records are accounting metadata and remain in REVIEW until an authorized operator approves settlement.
 - No automatic Bitcoin transfer is implemented.
-- In-memory rate limiting is prototype-level; production should use a shared/distributed limiter.
+- Redis-backed rate limiting is supported; production should use a shared/distributed limiter and fail closed at the gateway if Redis is unavailable.
+- Authenticated account mutations accept `Idempotency-Key`; replays return the original response and mismatched reuse returns `409`.
+- Production migrations must be applied in order, including `migrations/005_idempotency.sql`.
+- The challenge ingestion path validates the registry entry before creating a job, so `jobs.puzzle_id` is guarded by application-level provenance validation.
 
 ## API
 
