@@ -11,10 +11,13 @@ def request(path, method="GET", data=None, headers=None):
     if headers: h.update(headers)
     try:
         with urllib.request.urlopen(urllib.request.Request(BASE+path, data=body, method=method, headers=h), timeout=15) as r:
-            return r.status, dict(r.headers), json.loads(r.read().decode() or "{}")
+            raw = r.read().decode(errors="replace")
+            try: payload = json.loads(raw) if raw else {}
+            except Exception: payload = {"raw": raw}
+            return r.status, dict(r.headers), payload
     except urllib.error.HTTPError as e:
         raw=e.read().decode(errors="replace")
-        try: payload=json.loads(raw)
+        try: payload=json.loads(raw) if raw else {}
         except Exception: payload={"raw":raw}
         return e.code, dict(e.headers), payload
 
