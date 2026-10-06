@@ -31,3 +31,14 @@ def test_assignment_state_transitions_use_rowcount_guards():
     import inspect
     assert 'where id=%s and status=\'ASSIGNED\'' in inspect.getsource(start_assignment)
     assert 'where id=%s and status=\'RUNNING\'' in inspect.getsource(complete_assignment)
+
+def test_public_claim_schema_cannot_request_verified():
+    from pydantic import ValidationError
+    import pytest
+    with pytest.raises(ValidationError):
+        ClaimCreate(
+            assignment_id=UUID("00000000-0000-0000-0000-000000000001"),
+            worker_id=UUID("00000000-0000-0000-0000-000000000002"),
+            candidate_hash="a" * 64,
+            result_status="VERIFIED",
+        )
