@@ -535,7 +535,8 @@ def marketplace(account_id: UUID = Depends(account_id_from_auth)):
         with conn.cursor() as cur:
             cur.execute(
                 """select id,title,challenge_type,reward_btc,balance_btc,status,provenance,
-                          verification,payout,source_adapter,live_checked_at,live_verification
+                          verification,payout,source_adapter,live_checked_at,live_verification,
+                          advertised_reward_btc,verified_balance_btc,funding_match,verification_stale,last_live_check_error
                    from challenge_registry
                    where status='OPEN + FUNDED'
                      and balance_btc > 0
@@ -547,7 +548,8 @@ def marketplace(account_id: UUID = Depends(account_id_from_auth)):
                    limit 100"""
             )
             keys=["challenge_id","title","challenge_type","reward_btc","balance_btc","status",
-                  "provenance","verification","payout","source_adapter","live_checked_at","live_verification"]
+                  "provenance","verification","payout","source_adapter","live_checked_at","live_verification",
+                  "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error"]
             rows=[dict(zip(keys,x)) for x in cur.fetchall()]
             cur.execute("select challenge_id from challenge_selections where account_id=%s order by selected_at desc",(account_id,))
             selected={x[0] for x in cur.fetchall()}
@@ -566,7 +568,7 @@ def marketplace_detail(challenge_id: str, account_id: UUID = Depends(account_id_
                    from challenge_registry where id=%s""",(challenge_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(404,"Challenge not found")
-            if row[5]!="OPEN + FUNDED" or row[4] <= 0:
+            if row[5]!="OPEN + FUNDED" or row[4] <= 0 or row[15] is not True or row[16] is not False:
                 raise HTTPException(409,"Challenge is not currently live and funded")
             keys=["challenge_id","title","challenge_type","reward_btc","balance_btc","status",
                   "provenance","verification","payout","source_adapter","live_checked_at","live_verification"]
