@@ -28,7 +28,7 @@ def test_verifier_requires_provenance_and_verification():
         "rules": "public-reward-challenge",
     }
     assert verifier_eligible(base) is False
-    base["provenance"] = {"url": "https://example.com", "checked_at": "2026-01-01T00:00:00Z"}
+    base["provenance"] = {"url": "https://example.com", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z"}
     base["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False}
     assert verifier_eligible(base) is True
 
@@ -54,7 +54,7 @@ def test_verified_result_pipeline_requires_registered_adapter():
         "balance_btc": 1,
         "reward_btc": 1,
         "rules": "public-reward-challenge",
-        "provenance": {"url": "https://example.com/challenge", "checked_at": "2026-01-01T00:00:00Z"},
+        "provenance": {"url": "https://example.com/challenge", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z"},
         "verification": {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False},
     }
     result = verify_candidate(record, "candidate")
