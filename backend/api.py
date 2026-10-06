@@ -1675,6 +1675,51 @@ class WithdrawalComplete(BaseModel):
     external_reference: str = Field(min_length=3, max_length=200)
 
 
+@app.get("/admin/withdrawals")
+def list_withdrawals(request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("""
+                select id,account_id,amount_btc,payout_address,status,external_reference,created_at,processed_at
+                from withdrawal_requests
+                where status in ('QUEUED','PROCESSING')
+                order by created_at asc
+                limit 100
+            """)
+            rows=cur.fetchall()
+    return {"withdrawals":[
+        {"id":str(r[0]),"account_id":str(r[1]),"amount_btc":float(r[2]),"payout_address":r[3],
+         "status":r[4],"external_reference":r[5],"created_at":r[6],"processed_at":r[7]}
+        for r in rows
+    ]}
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/processing")
+def start_withdrawal_processing(withdrawal_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"withdrawal_id":str(withdrawal_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute(
+                "update withdrawal_requests set status='PROCESSING' where id=%s and status='QUEUED' returning account_id,amount_btc,payout_address",
+                (withdrawal_id,),
+            )
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(409,"Withdrawal is not queued")
+            record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",withdrawal_id,account_id,
+                payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),"payout_address_present":True,"custody":"none"})
+            response={"withdrawal_id":str(withdrawal_id),"status":"PROCESSING","custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+
 @app.post("/admin/withdrawals/{withdrawal_id}/complete")
 def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
