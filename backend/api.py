@@ -178,6 +178,33 @@ def list_workers(account_id: UUID = Depends(account_id_from_auth)):
     return [{"id": str(r[0]), "label": r[1], "status": r[2], "registered_at": r[3], "last_seen_at": r[4]} for r in rows]
 
 
+@app.get("/jobs")
+def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select id,puzzle_id,status,created_at,completed_at from jobs "
+                "where scope='public-reward-challenge' order by created_at desc limit 50"
+            )
+            rows=cur.fetchall()
+    return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4]} for r in rows]
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select id,puzzle_id,scope,status,created_at,completed_at from jobs "
+                "where id=%s and scope='public-reward-challenge'",
+                (job_id,),
+            )
+            row=cur.fetchone()
+    if not row:
+        raise HTTPException(404, "Job not found")
+    return {"id":str(row[0]),"puzzle_id":row[1],"scope":row[2],"status":row[3],"created_at":row[4],"completed_at":row[5]}
+
+
 @app.post("/jobs")
 def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
