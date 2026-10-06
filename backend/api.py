@@ -372,6 +372,49 @@ def creator_challenge(body: CreatorChallenge, request: Request, account_id: UUID
     return {"challenge_id":body.challenge_id,"creator_status":"PENDING"}
 
 
+
+@app.post("/jobs/{job_id}/schedule")
+def schedule_job(job_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select j.id,j.puzzle_id,j.status,c.challenge_type
+                from jobs j join challenge_registry c on c.id=j.puzzle_id
+                where j.id=%s and j.status='QUEUED' and c.status='OPEN + FUNDED'
+                for update
+            """,(job_id,))
+            job=cur.fetchone()
+            if not job: raise HTTPException(409,"Job is not schedulable")
+            cur.execute("""
+                select w.id,w.last_seen_at,coalesce(rc.score,50),coalesce(wc.cpu_threads,1),coalesce(wc.adapter_types,'[]'::jsonb)
+                from workers w
+                left join (
+                  select worker_id,avg(weight) score from reputation_events group by worker_id
+                ) rc on rc.worker_id=w.id
+                left join worker_capabilities wc on wc.worker_id=w.id
+                where w.status='ACTIVE'
+                order by (w.last_seen_at is null),w.last_seen_at desc
+                limit 100
+            """)
+            candidates=cur.fetchall()
+            if not candidates: raise HTTPException(409,"No active workers available")
+            ranked=[]
+            for wid,last_seen,rep,threads,adapters in candidates:
+                score=capability_score({"id":wid,"cpu_threads":threads,"adapter_types":adapters or []},{"adapter_types":[job[3]]})
+                if score>0:
+                    ranked.append({"id":wid,"score":score*(float(rep)/100.0)})
+            if not ranked: raise HTTPException(409,"No compatible workers available")
+            ranked.sort(key=lambda x:(x["score"],str(x["id"])),reverse=True)
+            selected=ranked[0]
+            cur.execute(
+                "insert into scheduler_decisions(id,job_id,worker_id,score,reason) values(%s,%s,%s,%s,%s::jsonb)",
+                (uuid4(),job_id,selected["id"],selected["score"],json.dumps({"strategy":"capability+reputation"})),
+            )
+            record_audit_event(cur,"SCHEDULER_DECISION","job",job_id,account_id,selected["id"],payload={"score":selected["score"]})
+    return {"job_id":str(job_id),"selected_worker_id":str(selected["id"]),"score":selected["score"]}
+
+
 @app.get("/network")
 def network():
     with db() as conn:
