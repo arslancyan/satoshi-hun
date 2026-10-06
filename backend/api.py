@@ -995,6 +995,11 @@ def assignment_for_account(cur, assignment_id: UUID, account_id: UUID):
 def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     payload={"assignment_id":str(assignment_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
     now = datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
@@ -1007,9 +1012,8 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
                 raise HTTPException(409, "Assignment changed before start")
             cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'",(row[1],))
             record_audit_event(cur,"STARTED","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
-    response={"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
-    with db() as conn:
-        with conn.cursor() as cur:
+            response=response={"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
+
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
     return response
 
@@ -1018,6 +1022,11 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
 def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     payload={"assignment_id":str(assignment_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
@@ -1028,9 +1037,8 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id:
             cur.execute("update job_assignments set last_heartbeat_at=%s where id=%s",(now,assignment_id))
             cur.execute("update workers set last_seen_at=%s where id=%s",(now,row[2]))
             record_audit_event(cur,"HEARTBEAT","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
-    response={"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
-    with db() as conn:
-        with conn.cursor() as cur:
+            response=response={"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
+
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
     return response
 
@@ -1039,6 +1047,11 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id:
 def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     payload={"assignment_id":str(assignment_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
@@ -1058,9 +1071,8 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
             cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
             cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
             record_audit_event(cur,"COMPLETED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"contribution_seconds":seconds})
-    response={"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
-    with db() as conn:
-        with conn.cursor() as cur:
+            response=response={"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
+
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
     return response
 
@@ -1071,6 +1083,9 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
     payload=body.model_dump()
     with db() as conn:
         with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
             expire_stale_assignments(cur)
             cur.execute(
                 "select a.id,a.worker_id,a.status,j.status from job_assignments a "
@@ -1094,7 +1109,7 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
             record_audit_event(cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,payload={"assignment_id":str(body.assignment_id),"candidate_hash":body.candidate_hash,"result_status":body.result_status})
             # Verification is intentionally performed only by a trusted adapter pipeline.
     response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id)}
-    worker_idempotency_store(cur, token_worker_id, request, payload, response)
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
     return response
 
 
