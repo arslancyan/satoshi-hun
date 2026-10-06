@@ -1,5 +1,8 @@
 import os
 import hashlib
+import base64
+import hmac
+import re
 import json
 import logging
 import secrets
@@ -37,6 +40,7 @@ PAYOUT_WORKER_TOKEN = os.environ.get("PAYOUT_WORKER_TOKEN", "").strip()
 MAX_SINGLE_PAYOUT_BTC = Decimal(os.environ.get("MAX_SINGLE_PAYOUT_BTC", "0.001"))
 MAX_DAILY_PAYOUT_BTC = Decimal(os.environ.get("MAX_DAILY_PAYOUT_BTC", "0.005"))
 PAYOUT_RETRY_AFTER_MINUTES = max(5, int(os.environ.get("PAYOUT_RETRY_AFTER_MINUTES", "15")))
+PAYOUT_SIGNER_TOKEN = os.environ.get("PAYOUT_SIGNER_TOKEN", "").strip()
 TREASURY_BTC_ADDRESS = os.environ.get("TREASURY_BTC_ADDRESS", "bc1ptstlyntypqqf8s5qz3jwcsrxw2pxqj634c7pklj2mjlvqwl22l6qqq8csl").strip()
 TREASURY_WALLET_ID = UUID("00000000-0000-0000-0000-000000000001")
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
@@ -1935,6 +1939,42 @@ def scheduler_recommendations(limit: int = 10):
             return {"recommendations": recommendations[:limit]}
 
 
+class PSBTReady(BaseModel):
+    unsigned_psbt: str = Field(min_length=20, max_length=200000)
+    signer_id: str = Field(min_length=1, max_length=120)
+
+class SignedPayout(BaseModel):
+    signed_psbt: str = Field(min_length=20, max_length=400000)
+    signer_id: str = Field(min_length=1, max_length=120)
+
+class BroadcastPayout(BaseModel):
+    txid: str = Field(min_length=64, max_length=64)
+    broadcaster_id: str = Field(min_length=1, max_length=120)
+
+def require_payout_signer(request: Request):
+    if not PAYOUT_SIGNER_TOKEN:
+        raise HTTPException(503, "Payout signer is not configured")
+    supplied = request.headers.get("x-payout-signer-token", "")
+    if not hmac.compare_digest(supplied, PAYOUT_SIGNER_TOKEN):
+        raise HTTPException(401, "Invalid payout signer credential")
+
+def validate_psbt_text(value: str) -> str:
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except Exception:
+        raise HTTPException(422, "PSBT must be valid base64")
+    if not raw.startswith(b"psbt\xff"):
+        raise HTTPException(422, "Invalid PSBT magic header")
+    if len(raw) > 300000:
+        raise HTTPException(413, "PSBT is too large")
+    return value
+
+def validate_txid(value: str) -> str:
+    v=value.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", v):
+        raise HTTPException(422, "txid must be a 64-character hexadecimal Bitcoin transaction id")
+    return v
+
 class WithdrawalComplete(BaseModel):
     external_reference: str = Field(min_length=3, max_length=200)
 
@@ -1985,43 +2025,120 @@ def start_withdrawal_processing(withdrawal_id: UUID, request: Request, account_i
 
 
 @app.post("/admin/withdrawals/{withdrawal_id}/complete")
-def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+def complete_withdrawal_legacy_blocked(withdrawal_id: UUID, request: Request,
+                                       account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
-    if not validate_external_txid(body.external_reference):
-        raise HTTPException(422, "external_reference must be a 64-character Bitcoin transaction id")
-    payload={"withdrawal_id":str(withdrawal_id),"external_reference":body.external_reference}
+    raise HTTPException(410, "Manual TXID settlement is disabled. Use the secure PSBT settlement rail.")
+
+@app.post("/internal/payouts/{withdrawal_id}/psbt")
+def submit_unsigned_psbt(withdrawal_id: UUID, body: PSBTReady, request: Request):
+    require_payout_signer(request)
+    psbt=validate_psbt_text(body.unsigned_psbt)
     with db() as conn:
         with conn.cursor() as cur:
-            replay=idempotency_replay(cur, account_id, request, payload)
-            if replay is not None:
-                return replay
-            require_owner(cur, account_id)
             cur.execute(
-                "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
-                "where id=%s and status in ('QUEUED','PROCESSING') returning account_id,amount_btc",
-                (body.external_reference.strip(),withdrawal_id),
+                "select ps.id,ps.status,ps.amount_btc,ps.destination_btc_address "
+                "from payout_settlements ps join withdrawal_requests w on w.id=ps.withdrawal_id "
+                "where ps.withdrawal_id=%s for update",
+                (withdrawal_id,),
             )
             row=cur.fetchone()
-            if not row:
-                raise HTTPException(409,"Withdrawal is not queued or processing")
+            if not row: raise HTTPException(404,"Payout settlement not found")
+            if row[1] not in ("PSBT_REQUESTED","PSBT_READY"): raise HTTPException(409,"Settlement is not awaiting an unsigned PSBT")
+            cur.execute(
+                "update payout_settlements set unsigned_psbt=%s,signer_id=%s,status='PSBT_READY',updated_at=now() where id=%s",
+                (psbt,body.signer_id,row[0]),
+            )
+            cur.execute(
+                "insert into payout_settlement_events(id,settlement_id,event_type,signer_id,metadata) values(%s,%s,'PSBT_READY',%s,%s::jsonb)",
+                (uuid4(),row[0],body.signer_id,json.dumps({"amount_btc":str(row[2]),"destination_btc_address":row[3]})),
+            )
+    return {"withdrawal_id":str(withdrawal_id),"settlement_id":str(row[0]),"status":"PSBT_READY"}
+
+@app.post("/internal/payouts/{withdrawal_id}/signed")
+def submit_signed_psbt(withdrawal_id: UUID, body: SignedPayout, request: Request):
+    require_payout_signer(request)
+    signed=validate_psbt_text(body.signed_psbt)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select id,status,unsigned_psbt,amount_btc,destination_btc_address from payout_settlements "
+                "where withdrawal_id=%s for update",(withdrawal_id,),
+            )
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"Payout settlement not found")
+            if row[1] != "PSBT_READY": raise HTTPException(409,"Settlement is not ready for signing")
+            if not row[2]: raise HTTPException(409,"Unsigned PSBT is missing")
+            cur.execute(
+                "update payout_settlements set signed_tx_hex=%s,signer_id=%s,status='SIGNED',signed_at=now(),updated_at=now() where id=%s",
+                (signed,body.signer_id,row[0]),
+            )
+            cur.execute(
+                "insert into payout_settlement_events(id,settlement_id,event_type,signer_id,metadata) values(%s,%s,'SIGNED',%s,%s::jsonb)",
+                (uuid4(),row[0],body.signer_id,json.dumps({"amount_btc":str(row[3]),"destination_btc_address":row[4]})),
+            )
+    return {"withdrawal_id":str(withdrawal_id),"settlement_id":str(row[0]),"status":"SIGNED"}
+
+@app.post("/internal/payouts/{withdrawal_id}/broadcast")
+def confirm_broadcast(withdrawal_id: UUID, body: BroadcastPayout, request: Request):
+    require_payout_signer(request)
+    txid=validate_txid(body.txid)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select id,status,amount_btc,destination_btc_address,signed_tx_hex from payout_settlements "
+                "where withdrawal_id=%s for update",(withdrawal_id,),
+            )
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"Payout settlement not found")
+            if row[1] not in ("SIGNED","BROADCAST"): raise HTTPException(409,"Settlement is not signed")
+            if not row[4]: raise HTTPException(409,"Signed PSBT is missing")
+            cur.execute(
+                "update payout_settlements set status='BROADCAST',txid=%s,updated_at=now(),broadcast_at=coalesce(broadcast_at,now()) where id=%s",
+                (txid,row[0]),
+            )
+            cur.execute(
+                "insert into payout_settlement_events(id,settlement_id,event_type,signer_id,txid,metadata) values(%s,%s,'BROADCAST',%s,%s,%s::jsonb)",
+                (uuid4(),row[0],body.broadcaster_id,txid,json.dumps({"amount_btc":str(row[2]),"destination_btc_address":row[3]})),
+            )
+    return {"withdrawal_id":str(withdrawal_id),"settlement_id":str(row[0]),"status":"BROADCAST","txid":txid}
+
+@app.post("/internal/payouts/{withdrawal_id}/settle")
+def settle_broadcast(withdrawal_id: UUID, request: Request):
+    require_payout_signer(request)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select ps.id,ps.status,ps.txid,w.account_id,w.amount_btc "
+                "from payout_settlements ps join withdrawal_requests w on w.id=ps.withdrawal_id "
+                "where ps.withdrawal_id=%s for update",(withdrawal_id,),
+            )
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"Payout settlement not found")
+            if row[1] != "BROADCAST" or not row[2]: raise HTTPException(409,"Payout has not been broadcast")
+            cur.execute(
+                "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
+                "where id=%s and status='PROCESSING' returning id",
+                (row[2],withdrawal_id),
+            )
+            if cur.rowcount != 1: raise HTTPException(409,"Withdrawal is not PROCESSING")
+            cur.execute(
+                "update payout_settlements set status='SETTLED',settled_at=now(),updated_at=now() where id=%s",
+                (row[0],),
+            )
             cur.execute(
                 "update treasury_accounting set reserved_btc=reserved_btc-%s,updated_at=now() where id=%s and reserved_btc >= %s",
-                (row[1], TREASURY_WALLET_ID, row[1]),
+                (row[4],TREASURY_WALLET_ID,row[4]),
             )
-            if cur.rowcount != 1:
-                raise HTTPException(409, "Treasury reservation is inconsistent")
-            treasury_ledger(cur, "USER_WITHDRAWAL_SETTLED", row[1], "WITHDRAWAL", withdrawal_id,
-                            account_id=row[0])
-            record_audit_event(
-                cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,account_id,
-                payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),
-                         "external_reference":body.external_reference.strip(),"custody":"none"},
+            if cur.rowcount != 1: raise HTTPException(409,"Treasury reservation is inconsistent")
+            treasury_ledger(cur,"USER_WITHDRAWAL_SETTLED",row[4],"WITHDRAWAL",withdrawal_id,account_id=row[3])
+            cur.execute(
+                "insert into payout_settlement_events(id,settlement_id,event_type,txid,metadata) values(%s,%s,'SETTLED',%s,%s::jsonb)",
+                (uuid4(),row[0],row[2],json.dumps({"amount_btc":str(row[4])})),
             )
-            response={"withdrawal_id":str(withdrawal_id),"status":"PAID",
-                      "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
-            idempotency_store(cur, account_id, request, payload, response)
-            return response
-
+            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,row[3],
+                payload={"amount_btc":str(row[4]),"external_reference":row[2],"rail":"PSBT","custody":"central_treasury"})
+    return {"withdrawal_id":str(withdrawal_id),"status":"PAID","external_reference":row[2],"rail":"PSBT","custody":"central_treasury"}
 
 @app.post("/internal/payouts/next")
 def payout_worker_next(request: Request):
@@ -2061,12 +2178,28 @@ def payout_worker_next(request: Request):
             )
             if cur.rowcount != 1:
                 return {"withdrawal":None}
+            settlement_id=uuid4()
+            cur.execute(
+                "insert into payout_settlements(id,withdrawal_id,wallet_id,amount_btc,destination_btc_address,status) "
+                "values(%s,%s,%s,%s,%s,'PSBT_REQUESTED') on conflict(withdrawal_id) do update set updated_at=now() "
+                "returning id,status",
+                (settlement_id,wid,TREASURY_WALLET_ID,amount,address),
+            )
+            settlement_row=cur.fetchone()
+            settlement_id=settlement_row[0]
+            cur.execute("update withdrawal_requests set settlement_id=%s where id=%s",(settlement_id,wid))
+            cur.execute(
+                "insert into payout_settlement_events(id,settlement_id,event_type,metadata) values(%s,%s,'PSBT_REQUESTED',%s::jsonb)",
+                (uuid4(),settlement_id,json.dumps({"amount_btc":str(amount),"destination_btc_address":address})),
+            )
             record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",wid,account_id,
                 payload={"amount_btc":str(amount),"payout_address_present":True,
+                         "settlement_id":str(settlement_id),"rail":"PSBT",
                          "max_single_btc":str(MAX_SINGLE_PAYOUT_BTC),"max_daily_btc":str(MAX_DAILY_PAYOUT_BTC),
-                         "custody":"none"})
+                         "custody":"central_treasury"})
             return {"withdrawal":{"id":str(wid),"account_id":str(account_id),"amount_btc":float(amount),
-                                  "payout_address":address,"status":"PROCESSING","idempotency_key":str(wid)}}
+                                  "payout_address":address,"status":"PROCESSING","settlement_id":str(settlement_id),
+                                  "settlement_status":"PSBT_REQUESTED","idempotency_key":str(wid)}}
 
 
 @app.post("/internal/payouts/{withdrawal_id}/complete")
