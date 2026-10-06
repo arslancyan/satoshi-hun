@@ -1966,8 +1966,8 @@ def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(accoun
                         (uuid4(), account_id, reward_id, event["worker_share_btc"]),
                     )
                     cur.execute(
-                        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc) "
-                        "values(%s,%s,%s,'PLATFORM_FEE',%s) on conflict(reward_event_id,entry_type) do nothing",
+                        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) "
+                        "values(%s,%s,%s,'PLATFORM_FEE',%s,%s) on conflict(reward_event_id,entry_type) do nothing",
                         (uuid4(), account_id, reward_id, event["platform_fee_btc"], OWNER_PLATFORM_FEE_BTC_ADDRESS),
                     )
                     cur.execute("select btc_payout_address from accounts where id=%s for update", (account_id,))
