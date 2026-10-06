@@ -1006,6 +1006,145 @@ def me(account_id: UUID = Depends(account_id_from_auth)):
     return {"id": str(row[0]), "email": row[1], "btc_payout_address": row[2], "created_at": row[3]}
 
 
+
+@app.get("/account/rewards")
+def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select coalesce(available_btc,0) from reward_balances where account_id=%s",
+                (account_id,),
+            )
+            row = cur.fetchone()
+            available = Decimal(str(row[0] if row else 0))
+            cur.execute(
+                "select id,amount_btc,payout_address,status,external_reference,created_at,processed_at "
+                "from withdrawal_requests where account_id=%s order by created_at desc limit 10",
+                (account_id,),
+            )
+            withdrawals = [
+                {
+                    "id": str(x[0]),
+                    "amount_btc": float(x[1]),
+                    "payout_address": x[2],
+                    "status": x[3],
+                    "external_reference": x[4],
+                    "created_at": x[5],
+                    "processed_at": x[6],
+                }
+                for x in cur.fetchall()
+            ]
+    return {"available_btc": float(available), "withdrawals": withdrawals}
+
+
+@app.put("/account/payout-address")
+def update_account_payout_address(request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload = request.json
+    return _update_account_payout_address_sync(request, account_id, payload)
+
+
+def _update_account_payout_address_sync(request: Request, account_id: UUID, payload):
+    # Kept as a small helper so the account route remains compatible with the
+    # existing synchronous DB layer.
+    address = str(payload.get("btc_payout_address", "")).strip()
+    if not valid_btc_mainnet_address(address):
+        raise HTTPException(422, "A valid Bitcoin mainnet payout address is required")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update accounts set btc_payout_address=%s where id=%s returning id",
+                (address, account_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(404, "Account not found")
+            record_audit_event(
+                cur, "PAYOUT_ADDRESS_UPDATED", "account", account_id,
+                account_id=account_id, payload={"address_present": True},
+            )
+    return {"status": "SAVED", "btc_payout_address": address}
+
+
+@app.post("/account/withdrawals")
+def create_account_withdrawal(request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload = request.json
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay = idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+
+            cur.execute(
+                "select btc_payout_address from accounts where id=%s for update",
+                (account_id,),
+            )
+            account = cur.fetchone()
+            if not account:
+                raise HTTPException(404, "Account not found")
+            payout_address = (account[0] or "").strip()
+            if not payout_address:
+                raise HTTPException(409, "Save a valid BTC payout address before withdrawing")
+
+            try:
+                requested = Decimal(str(payload.get("amount_btc")))
+            except Exception:
+                raise HTTPException(422, "Withdrawal amount must be a valid BTC amount")
+            if requested <= 0:
+                raise HTTPException(422, "Withdrawal amount must be greater than zero")
+            if requested > MAX_SINGLE_PAYOUT_BTC:
+                raise HTTPException(409, f"Withdrawal exceeds the single-payout limit of {MAX_SINGLE_PAYOUT_BTC} BTC")
+
+            cur.execute(
+                "select coalesce(available_btc,0) from reward_balances where account_id=%s for update",
+                (account_id,),
+            )
+            row = cur.fetchone()
+            available = Decimal(str(row[0] if row else 0))
+            if available <= 0 or requested > available:
+                raise HTTPException(409, "There is no available reward balance to withdraw at this time")
+
+            treasury_available = treasury_available_btc(cur)
+            if treasury_available < requested:
+                raise HTTPException(409, "Treasury does not currently have enough available BTC for this withdrawal")
+
+            cur.execute(
+                "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
+                "where account_id=%s and available_btc >= %s",
+                (requested, account_id, requested),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(409, "Reward balance changed. Please refresh and try again.")
+
+            wid = uuid4()
+            cur.execute(
+                "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) "
+                "values(%s,%s,%s,%s,'QUEUED')",
+                (wid, account_id, requested, payout_address),
+            )
+            cur.execute(
+                "update treasury_accounting set reserved_btc=reserved_btc+%s,updated_at=now() where id=%s",
+                (requested, TREASURY_WALLET_ID),
+            )
+            treasury_ledger(
+                cur, "USER_WITHDRAWAL_RESERVED", requested, "WITHDRAWAL", wid,
+                account_id=account_id, destination_btc_address=payout_address,
+            )
+            record_audit_event(
+                cur, "WITHDRAWAL_QUEUED", "withdrawal", wid,
+                account_id=account_id,
+                payload={"amount_btc": str(requested), "payout_address_present": True},
+            )
+            response = {
+                "status": "QUEUED",
+                "withdrawal_id": str(wid),
+                "amount_btc": float(requested),
+                "payout_address": payout_address,
+            }
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+
 def require_owner(cur, account_id: UUID):
     if not OWNER_EMAIL:
         raise HTTPException(503, "OWNER_EMAIL is not configured")
