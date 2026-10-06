@@ -9,15 +9,16 @@
   "balance_btc": 0.59364885,
   "eligibility": "RESEARCH BREAKTHROUGH — not a routine compute job",
   "provenance": {
-    "url": "https://github.com/floflo777/open-crypto-puzzles",
+    "url": "https://bitcointalk.org/index.php?topic=293382.0",
     "source_id": "peter-todd-hash-collision-bounties-0-59btc",
     "checked_at": "2026-10-06"
   },
   "verification": {
-    "method": "published hash-collision rule; verify two distinct <=520-byte messages against named hash",
+    "method": "published P2SH hash-collision rule; two distinct <=520-byte messages must produce the same named hash",
     "source_id": "peter-todd-hash-collision-bounties-0-59btc",
     "checked_at": "2026-10-06",
-    "fingerprint": "four-live-escrows-public-record"
+    "fingerprint": "four-live-escrows-public-record",
+    "allowed_algorithms": ["sha256", "ripemd160", "hash160", "hash256"]
   },
   "escrow_addresses": [
     "35Snmmy3uhaer2gTboc81ayCip4m9DT4ko",
