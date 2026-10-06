@@ -16,3 +16,28 @@
 
 ## Current hard gate
 Satoshi Hunt must not be presented as a live earning network until production infrastructure, real challenge provenance/funding, adapter verification, staging integration tests, and external security review are complete.
+
+
+## Phases 13–31
+
+| Phase | Status | Repository result |
+|---|---|---|
+| 13 Multi-worker scheduler | FOUNDATION DONE | Capability/reputation-aware scheduler decision endpoint |
+| 14 Adaptive workload allocation | DONE | Weighted deterministic range allocator |
+| 15 Worker health scoring | CORE DONE | Reputation and capability data model |
+| 16 Anti-cheat / Sybil resistance | FOUNDATION DONE | Duplicate/range/proof integrity checks and security flags |
+| 17 Proof-of-contribution protocol | CORE DONE | Checkpoint hashes and work-proof ledger |
+| 18 Job checkpoint & resume | DONE | Server checkpoints and worker resume cursor |
+| 19 Worker crash recovery | FOUNDATION DONE | Existing expiry + resumable checkpoints |
+| 20 Challenge lifecycle automation | CORE DONE | Publish/pause controls and scheduler gating |
+| 21 Challenge source adapters | FOUNDATION DONE | Adapter SDK and server ingestion contract |
+| 22 Public Audit Explorer | DONE | Public audit explorer API and UI |
+| 23 Analytics / operator dashboard | FOUNDATION DONE | Network, reputation, marketplace telemetry |
+| 24 Beta/release engineering | FOUNDATION DONE | Staging runbook, load-test plan, readiness endpoint |
+| 25 Contribution marketplace | FOUNDATION DONE | Published challenge offers |
+| 26 Intelligent scheduler | FOUNDATION DONE | Capability + reputation scoring |
+| 27 Proof-of-Contribution Protocol | CORE DONE | Hash-chained audit + checkpoint proof records |
+| 28 Challenge reputation | FOUNDATION DONE | Provenance/verification gate and creator status |
+| 29 Worker reputation network | CORE DONE | Reliability scoring and reputation events schema |
+| 30 Satoshi Hunt Protocol v1 | FOUNDATION DONE | Protocol primitives and database model |
+| 31 Challenge Creator Portal | FOUNDATION DONE | Creator registration, approval, offers, publishing |
