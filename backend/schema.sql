@@ -14,6 +14,14 @@ create table if not exists accounts (
   created_at timestamptz not null default now()
 );
 
+create table if not exists idempotency_keys (
+  account_id uuid not null references accounts(id) on delete cascade,
+  idempotency_key text not null,
+  response_json jsonb not null,
+  created_at timestamptz not null default now(),
+  primary key (account_id, idempotency_key)
+);
+
 create table if not exists workers (
   id uuid primary key,
   account_id uuid not null references accounts(id) on delete cascade,
