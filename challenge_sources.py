@@ -11,6 +11,9 @@ SOURCE_URL = os.getenv(
 BITCOIN_EXPLORER_BASE = os.getenv(
     "BITCOIN_EXPLORER_BASE", "https://blockstream.info/api"
 ).rstrip("/")
+MEMPOOL_EXPLORER_BASE = os.getenv(
+    "MEMPOOL_EXPLORER_BASE", "https://mempool.space/api"
+).rstrip("/")
 ETH_RPC_URL = os.getenv("ETH_RPC_URL", "").strip()
 
 
@@ -101,6 +104,26 @@ class BitcoinEsploraAdapter:
 
     def outspend(self, txid, vout):
         return _fetch_json(f"{self.base_url}/tx/{txid}/outspend/{vout}")
+
+    def exact_outspend_evidence(self, utxos):
+        evidence = []
+        for u in utxos:
+            try:
+                spend = self.outspend(u["txid"], int(u["vout"]))
+            except Exception:
+                continue
+            if spend.get("spent") and spend.get("txid"):
+                txid = spend["txid"]
+                evidence.append({
+                    "funding_txid": u["txid"],
+                    "funding_vout": int(u["vout"]),
+                    "funding_value_sats": int(u["value"]),
+                    "spending_txid": txid,
+                    "spending_vin": spend.get("vin"),
+                    "spend_status": spend.get("status") or {},
+                    "evidence_url": self.base_url + "/tx/" + txid,
+                })
+        return evidence
 
     def confirmed_balance_sats(self, address):
         state = self.state(address)
@@ -226,14 +249,26 @@ class OpenCryptoPuzzlesAdapter:
                     continue
                 try:
                     live_sats = self.btc.confirmed_balance_sats(item["address"])
+                    secondary_sats = self.mempool.confirmed_balance_sats(item["address"])
+                    if live_sats != secondary_sats:
+                        raise RuntimeError(
+                            f"explorer disagreement: blockstream={live_sats}, mempool={secondary_sats}"
+                        )
                     expected_sats = _parse_expected_sats(item.get("expected"))
+                    utxos = self.btc.utxos(item["address"])
                     live_addresses.append(
                         {
                             **item,
                             "expected_sats": expected_sats,
                             "live_balance_sats": live_sats,
+                            "secondary_balance_sats": secondary_sats,
                             "live_balance_btc": live_sats / 100_000_000,
                             "live_checked_at": _now(),
+                            "live_utxos": [
+                                {"txid":u.get("txid"),"vout":int(u.get("vout",0)),
+                                 "value":int(u.get("value",0))}
+                                for u in utxos
+                            ],
                         }
                     )
                     # Only explicitly prize-bearing escrows count. Addresses
@@ -281,6 +316,8 @@ class OpenCryptoPuzzlesAdapter:
                 "confirmed_only": True,
                 "verification_stale": False,
                 "addresses": live_addresses,
+                "dual_explorer_match": True,
+                "solve_evidence_policy": "exact-escrow-utxo-spend-required",
             }
             payout = {
                 "mode": "DIRECT_PUBLIC_ESCROW",
@@ -309,6 +346,14 @@ class OpenCryptoPuzzlesAdapter:
             )
         return out
 
+
+
+def exact_escrow_spend_evidence(adapter, verification):
+    """Return exact spend evidence without declaring a solve."""
+    evidence = []
+    for address in (verification or {}).get("addresses", []):
+        evidence.extend(adapter.exact_outspend_evidence(address.get("live_utxos", [])))
+    return evidence
 
 def discover_live_challenges():
     return [x.as_registry() for x in OpenCryptoPuzzlesAdapter().discover()]
