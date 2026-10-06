@@ -19,6 +19,17 @@ pip install -r requirements.txt
 python worker.py
 ```
 
+## Mobile worker
+
+Android/Termux and lightweight Linux devices can use the battery-friendly API worker:
+
+```bash
+python mobile_worker.py
+```
+
+See MOBILE_WORKER.md for HTTPS configuration, Worker-token setup, five-device beta guidance, adaptive polling, and the explicit public-challenge safety boundary.
+
+
 ## Audit
 ```bash
 python audit.py
