@@ -584,16 +584,44 @@ def reputation(account_id: UUID = Depends(account_id_from_auth)):
         with conn.cursor() as cur:
             cur.execute("""
                 select
+                  count(*) filter (where c.result_status in ('TESTED','VERIFIED','REJECTED')),
                   count(*) filter (where c.result_status='VERIFIED'),
                   count(*) filter (where c.result_status='REJECTED'),
                   coalesce(sum(c.cpu_seconds),0)
                 from work_claims c join workers w on w.id=c.worker_id
-                where w.account_id=%s
+                where w.account_id=%s and c.finished_at > now() - interval '30 days'
             """,(account_id,))
-            verified,rejected,cpu=cur.fetchone()
-    total=verified+rejected
-    score=100.0 if total==0 else round((verified/total)*100,2)
-    return {"verified_claims":verified,"rejected_claims":rejected,"cpu_seconds":cpu,"reliability_score":score}
+            claim_count,verified,rejected,cpu=cur.fetchone()
+            cur.execute("""
+                select
+                  count(*) filter (where a.status='COMPLETED'),
+                  count(*) filter (where a.status='EXPIRED'),
+                  coalesce(sum(a.verified_seconds),0)
+                from job_assignments a join workers w on w.id=a.worker_id
+                where w.account_id=%s and a.assigned_at > now() - interval '30 days'
+            """,(account_id,))
+            completed,stale,seconds=cur.fetchone()
+            cur.execute("""
+                select count(*) from security_events s
+                join workers w on w.id=s.worker_id
+                where w.account_id=%s and s.event_type='DUPLICATE_CLAIM'
+                and s.created_at > now() - interval '30 days'
+            """,(account_id,))
+            duplicates=cur.fetchone()[0]
+    score=reputation_score(claim_count,verified,rejected+duplicates,stale,completed,seconds)
+    flags=security_flags(claim_count,duplicates,rejected,stale)
+    return {
+        "verified_claims":verified,
+        "rejected_claims":rejected,
+        "duplicate_claims":duplicates,
+        "completed_assignments":completed,
+        "stale_assignments":stale,
+        "contributed_worker_seconds":seconds,
+        "cpu_seconds":cpu,
+        "reliability_score":score,
+        "security_flags":flags,
+        "window_days":30,
+    }
 
 
 @app.get("/health")
