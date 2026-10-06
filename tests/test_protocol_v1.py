@@ -1,4 +1,4 @@
-from protocol_v1 import adaptive_ranges, capability_score, proof_hash, reliability_score
+from protocol_v1 import adaptive_ranges, capability_score, economic_priority, proof_hash, reliability_score
 from anti_cheat import detect_range_overlap, fingerprint_assignment, security_flags
 
 
@@ -34,3 +34,13 @@ def test_assignment_fingerprint_changes_with_range():
     a=fingerprint_assignment("j","w",0,10)
     b=fingerprint_assignment("j","w",10,20)
     assert a != b
+
+
+def test_economic_priority_prefers_higher_expected_reward_per_hour():
+    high = economic_priority(0.01, 3600, 0.10, 1.0)
+    low = economic_priority(0.02, 7200, 0.01, 1.0)
+    assert high > low
+
+
+def test_economic_priority_is_bounded_for_bad_inputs():
+    assert economic_priority(-1, 0, 5, 5) == 0.0
