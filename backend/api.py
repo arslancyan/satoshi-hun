@@ -23,6 +23,7 @@ SESSION_TTL = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
 ASSIGNMENT_TIMEOUT_SECONDS = max(30, int(os.environ.get("ASSIGNMENT_TIMEOUT_SECONDS", "120")))
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "")
 CHALLENGE_INGESTION_KEY = os.environ.get("CHALLENGE_INGESTION_KEY", "")
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "").strip().lower()
 RATE_LIMIT_REDIS_URL = os.environ.get("RATE_LIMIT_REDIS_URL", "")
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
@@ -221,6 +222,15 @@ def me(account_id: UUID = Depends(account_id_from_auth)):
     return {"id": str(row[0]), "email": row[1], "btc_payout_address": row[2], "created_at": row[3]}
 
 
+def require_owner(cur, account_id: UUID):
+    if not OWNER_EMAIL:
+        raise HTTPException(503, "OWNER_EMAIL is not configured")
+    cur.execute("select email from accounts where id=%s", (account_id,))
+    row = cur.fetchone()
+    if not row or row[0].lower() != OWNER_EMAIL:
+        raise HTTPException(403, "Owner authorization required")
+
+
 def worker_owned(cur, worker_id: UUID, account_id: UUID, active_only=True):
     if active_only:
         cur.execute("select id from workers where id=%s and account_id=%s and status='ACTIVE'", (worker_id, account_id))
@@ -364,6 +374,110 @@ def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingest
                 record_audit_event(cur,"CHALLENGE_INGESTED","challenge",body.id,payload={"job_id":str(job_id),"verification_fingerprint":body.verification.get("fingerprint")})
     return {"challenge_id":body.id,"job_id":str(job_id),"status":"QUEUED"}
 
+
+
+
+@app.get("/admin/rewards")
+def admin_rewards(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute(
+                "select id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id,created_at,approved_at,settled_at "
+                "from reward_events order by created_at desc limit 100"
+            )
+            return {"rewards":[dict(zip(["id","account_id","puzzle_id","gross_reward_btc","worker_share_btc","platform_fee_btc","settlement_status","source_claim_id","created_at","approved_at","settled_at"],r)) for r in cur.fetchall()]}
+
+
+@app.post("/admin/rewards/{reward_id}/approve")
+def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("update reward_events set settlement_status='APPROVED',approved_at=now() where id=%s and settlement_status='REVIEW' returning puzzle_id,account_id", (reward_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Reward is not in REVIEW")
+            record_audit_event(cur,"REWARD_APPROVED","reward_event",reward_id,account_id,payload={"puzzle_id":row[0],"beneficiary_account":str(row[1])})
+    return {"status":"APPROVED","reward_id":str(reward_id)}
+
+
+@app.post("/admin/rewards/{reward_id}/void")
+def void_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("update reward_events set settlement_status='VOID' where id=%s and settlement_status in ('REVIEW','APPROVED') returning puzzle_id", (reward_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Reward cannot be voided from its current state")
+            record_audit_event(cur,"REWARD_VOID","reward_event",reward_id,account_id,payload={"puzzle_id":row[0]})
+    return {"status":"VOID","reward_id":str(reward_id)}
+
+
+@app.post("/admin/rewards/{reward_id}/settle")
+def settle_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("update reward_events set settlement_status='SETTLED',settled_at=now() where id=%s and settlement_status='APPROVED' returning puzzle_id,account_id,worker_share_btc,platform_fee_btc", (reward_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Reward must be APPROVED before settlement")
+            record_audit_event(cur,"REWARD_SETTLED","reward_event",reward_id,account_id,payload={"puzzle_id":row[0],"beneficiary_account":str(row[1]),"custody":"none"})
+    return {"status":"SETTLED","reward_id":str(reward_id),"custody":"non-custodial"}
+
+
+@app.get("/admin/community")
+def admin_community(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("select id,source_reward_event_id,amount_btc,status,created_at,approved_at,distributed_at from community_allocations order by created_at desc limit 100")
+            return {"allocations":[dict(zip(["id","source_reward_event_id","amount_btc","status","created_at","approved_at","distributed_at"],r)) for r in cur.fetchall()]}
+
+
+@app.post("/admin/community")
+def create_community_allocation(source_reward_event_id: UUID, amount_btc: float, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    if amount_btc <= 0: raise HTTPException(400, "amount_btc must be positive")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("select platform_fee_btc,account_id,puzzle_id,settlement_status from reward_events where id=%s for update", (source_reward_event_id,))
+            row=cur.fetchone()
+            if not row or row[3] != "SETTLED": raise HTTPException(409, "Source reward must be SETTLED")
+            if amount_btc > float(row[0]): raise HTTPException(400, "Allocation exceeds platform fee")
+            cur.execute("insert into community_allocations(id,source_reward_event_id,amount_btc) values(%s,%s,%s) returning id", (uuid4(),source_reward_event_id,amount_btc))
+            alloc=cur.fetchone()[0]
+            record_audit_event(cur,"COMMUNITY_ALLOCATION_CREATED","community_allocation",alloc,account_id,payload={"source_reward_event":str(source_reward_event_id),"amount_btc":amount_btc})
+    return {"id":str(alloc),"status":"MANUAL_REVIEW"}
+
+
+@app.post("/admin/community/{allocation_id}/approve")
+def approve_community(allocation_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("update community_allocations set status='APPROVED',approved_at=now() where id=%s and status='MANUAL_REVIEW' returning amount_btc", (allocation_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Allocation is not in MANUAL_REVIEW")
+            record_audit_event(cur,"COMMUNITY_ALLOCATION_APPROVED","community_allocation",allocation_id,account_id,payload={"amount_btc":row[0]})
+    return {"status":"APPROVED","id":str(allocation_id)}
+
+
+@app.post("/admin/community/{allocation_id}/distributed")
+def distribute_community(allocation_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("update community_allocations set status='DISTRIBUTED',distributed_at=now() where id=%s and status='APPROVED' returning amount_btc", (allocation_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Allocation must be APPROVED before distribution")
+            record_audit_event(cur,"COMMUNITY_ALLOCATION_DISTRIBUTED","community_allocation",allocation_id,account_id,payload={"amount_btc":row[0],"custody":"none"})
+    return {"status":"DISTRIBUTED","id":str(allocation_id),"custody":"non-custodial"}
 
 @app.post("/jobs")
 def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
