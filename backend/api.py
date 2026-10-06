@@ -402,9 +402,13 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
-            row=assignment_for_account(cur,assignment_id,account_id)
+            row=assignment_for_worker(cur,assignment_id,token_worker_id)
             if not row: raise HTTPException(404,"Assignment not found")
             if row[3]!="RUNNING": raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("select w.account_id from workers w where w.id=%s", (token_worker_id,))
+            account_row=cur.fetchone()
+            if not account_row: raise HTTPException(404,"Worker not found")
+            account_id=account_row[0]
             cur.execute("select extract(epoch from (%s-started_at))::bigint from job_assignments where id=%s",(now,assignment_id))
             seconds=max(0,int(cur.fetchone()[0] or 0))
             cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s",(now,now,seconds,assignment_id))
