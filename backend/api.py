@@ -1945,6 +1945,7 @@ class PSBTReady(BaseModel):
 
 class SignedPayout(BaseModel):
     signed_psbt: str = Field(min_length=20, max_length=400000)
+    final_tx_hex: str = Field(min_length=100, max_length=400000)
     signer_id: str = Field(min_length=1, max_length=120)
 
 class BroadcastPayout(BaseModel):
@@ -2070,8 +2071,8 @@ def submit_signed_psbt(withdrawal_id: UUID, body: SignedPayout, request: Request
             if row[1] != "PSBT_READY": raise HTTPException(409,"Settlement is not ready for signing")
             if not row[2]: raise HTTPException(409,"Unsigned PSBT is missing")
             cur.execute(
-                "update payout_settlements set signed_tx_hex=%s,signer_id=%s,status='SIGNED',signed_at=now(),updated_at=now() where id=%s",
-                (signed,body.signer_id,row[0]),
+                "update payout_settlements set signed_psbt=%s,signed_tx_hex=%s,signer_id=%s,status='SIGNED',signed_at=now(),updated_at=now() where id=%s",
+                (signed,body.final_tx_hex,body.signer_id,row[0]),
             )
             cur.execute(
                 "insert into payout_settlement_events(id,settlement_id,event_type,signer_id,metadata) values(%s,%s,'SIGNED',%s,%s::jsonb)",
