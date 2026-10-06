@@ -10,7 +10,7 @@
     {"id":"peter-todd-hash-collision-bounties","title":"Peter Todd Hash Collision Bounties",
      "type":"hash-collision","status":"OPEN + FUNDED","balance_btc":0.59364885,"priority":100,
      "provenance":{"url":"https://bitcointalk.org/index.php?topic=293382.0","source_id":"peter-todd-hash-collision-bounties-0-59btc"},
-     "verification":{"method":"published P2SH hash-collision rule"},
+     "verification":{"method":"published P2SH hash-collision rule","escrow_spend_is_authoritative":true},
      "external_status":{"status":"UNKNOWN","verified":false,"evidence_url":null,"evidence_id":null}},
     {"id":"ballet-bobby-lee","title":"Ballet / Bobby Lee: Take Bobby's Bitcoin","type":"public-puzzle",
      "status":"CANDIDATE_NEEDS_LIVE_VERIFICATION","balance_btc":2.00007358,"priority":90,
