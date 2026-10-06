@@ -1633,7 +1633,7 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
         return None
     record={
         "id":job[0],"type":job[2],"reward_btc":job[3],"balance_btc":job[4],
-        "status":job[5],"rules":job[6],"provenance":job[7],"verification":job[8],
+        "status":job[5],"rules":job[6],"provenance":job[7],"verification":job[8],"payout":job[9],
     }
     result=verify_candidate_hash(record,candidate_hash)
     if not result["verified"]:
@@ -1681,27 +1681,26 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
         "on conflict(reward_event_id,entry_type) do nothing",
         (uuid4(),account_id,reward_id,event["worker_share_btc"]),
     )
+    owner_address=(record.get("payout") or {}).get("owner_btc_address")
+    if not owner_address:
+        raise HTTPException(500,"Challenge owner BTC address is missing from the verified payout metadata")
     cur.execute(
-        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) values(%s,%s,%s,'PLATFORM_FEE',%s,%s) "
-        "on conflict(reward_event_id,entry_type) do nothing",
-        (uuid4(),account_id,reward_id,event["platform_fee_btc"],OWNER_PLATFORM_FEE_BTC_ADDRESS),
+        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) values(%s,%s,%s,'PLATFORM_FEE',%s,%s)",
+        (uuid4(),account_id,reward_id,event["platform_fee_btc"],owner_address),
     )
-    cur.execute("select btc_payout_address from accounts where id=%s for update",(account_id,))
-    payout=cur.fetchone()
     withdrawal_queued=False
-    if payout and payout[0]:
-        cur.execute(
-            "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
-            "where account_id=%s and available_btc >= %s",
-            (event["worker_share_btc"],account_id,event["worker_share_btc"]),
-        )
-        if cur.rowcount != 1:
-            raise HTTPException(500,"Reward balance reservation failed")
-        cur.execute(
-            "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) values(%s,%s,%s,%s,'QUEUED')",
-            (uuid4(),account_id,event["worker_share_btc"],payout[0]),
-        )
-        withdrawal_queued=True
+    cur.execute(
+        "insert into notifications(id,account_id,event_type,title,message,metadata) "
+        "values(%s,%s,'REWARD_CREDITED','Reward credited','Your verified puzzle solution was accepted. "
+        "Your 85% solver reward has been credited to your BTC Rewards balance.',%s::jsonb)",
+        (uuid4(),account_id,json.dumps({
+            "reward_id":str(reward_id),
+            "job_id":str(job_id),
+            "reward_btc":str(event["worker_share_btc"]),
+            "owner_share_btc":str(event["platform_fee_btc"]),
+            "owner_btc_address":owner_address,
+        })),
+    )
     record_audit_event(
         cur,"AUTO_REWARD_CREDITED","reward_event",reward_id,account_id,worker_id,
         {"job_id":str(job_id),"claim_id":str(claim_id),"worker_share_btc":event["worker_share_btc"],
