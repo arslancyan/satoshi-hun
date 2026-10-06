@@ -56,3 +56,10 @@ def test_api_worker_mutation_idempotency_contract():
         section=api[api.index(marker):]
         assert "worker_idempotency_replay" in section
         assert "worker_idempotency_store" in section
+
+
+def test_claim_lifecycle_requires_active_assignment_and_job():
+    api = __import__("pathlib").Path("backend/api.py").read_text()
+    claim = api[api.index('@app.post("/jobs/{job_id}/claims")'):]
+    assert 'assignment[2] not in ("ASSIGNED","RUNNING")' in claim
+    assert 'assignment[3] not in ("QUEUED","RUNNING")' in claim
