@@ -339,22 +339,78 @@ class OpenCryptoPuzzlesAdapter:
                 "asset": "BTC",
             }
 
-            out.append(
-                LiveSourceRecord(
-                    ID_ALIASES.get(str(puzzle["slug"]), str(puzzle["slug"])),
-                    str(puzzle.get("title", puzzle["slug"])),
-                    "bitcoin",
-                    published_sats / 100_000_000,
-                    balance_btc,
-                    status,
-                    provenance,
-                    verification,
-                    payout,
-                    live_addresses,
-                    str((puzzle.get("puzzle_type") or ["public-puzzle"])[0]),
-                    self.adapter_id,
+            # Peter Todd contains four independently funded live escrows.
+            # Expose each escrow as its own runnable puzzle so hunters can
+            # choose SHA-256, RIPEMD-160, HASH160, or HASH256 separately.
+            if puzzle.get("slug") == "peter-todd-hash-collision-bounties-0-59btc":
+                algorithm_by_label = {
+                    "SHA-256": ("sha256", "peter-todd-sha256-bounty"),
+                    "RIPEMD-160": ("ripemd160", "peter-todd-ripemd160-bounty"),
+                    "HASH160 (RIPEMD160(SHA256()))": ("hash160", "peter-todd-hash160-bounty"),
+                    "HASH256 (SHA256(SHA256()))": ("hash256", "peter-todd-hash256-bounty"),
+                }
+                for live_item in live_addresses:
+                    if not live_item.get("counts_toward_prize"):
+                        continue
+                    label = str(live_item.get("label", "")).strip()
+                    match = algorithm_by_label.get(label)
+                    if not match:
+                        continue
+                    algorithm, stable_id = match
+                    expected = int(live_item.get("expected_sats") or 0)
+                    live_sats = int(live_item.get("live_balance_sats") or 0)
+                    per_funding_match = expected > 0 and live_sats >= expected
+                    per_balance_btc = live_sats / 100_000_000
+                    per_verification = {
+                        **verification,
+                        "fingerprint": stable_id,
+                        "allowed_algorithms": [algorithm],
+                        "escrow_address": live_item["address"],
+                        "counted_escrow_sats": live_sats,
+                        "advertised_reward_btc": expected / 100_000_000,
+                        "verified_balance_btc": per_balance_btc,
+                        "funding_match": per_funding_match,
+                        "escrow_spend_is_authoritative": True,
+                    }
+                    per_provenance = {
+                        **provenance,
+                        "source_id": stable_id,
+                        "parent_source_id": puzzle.get("slug"),
+                    }
+                    per_payout = {**payout, "claim_target": live_item["address"]}
+                    out.append(
+                        LiveSourceRecord(
+                            stable_id,
+                            f"Peter Todd — {label} Bounty",
+                            "bitcoin",
+                            expected / 100_000_000,
+                            per_balance_btc,
+                            "OPEN + FUNDED" if per_funding_match and live_sats > 0 else "OPEN + UNFUNDED",
+                            per_provenance,
+                            per_verification,
+                            per_payout,
+                            [live_item],
+                            "hash-collision",
+                            self.adapter_id,
+                        )
+                    )
+            else:
+                out.append(
+                    LiveSourceRecord(
+                        ID_ALIASES.get(str(puzzle["slug"]), str(puzzle["slug"])),
+                        str(puzzle.get("title", puzzle["slug"])),
+                        "bitcoin",
+                        published_sats / 100_000_000,
+                        balance_btc,
+                        status,
+                        provenance,
+                        verification,
+                        payout,
+                        live_addresses,
+                        str((puzzle.get("puzzle_type") or ["public-puzzle"])[0]),
+                        self.adapter_id,
+                    )
                 )
-            )
         return out
 
 
