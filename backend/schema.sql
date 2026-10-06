@@ -25,6 +25,22 @@ create table if not exists workers (
   token_hash text unique
 );
 
+create table if not exists challenge_registry (
+  id text primary key,
+  title text not null,
+  challenge_type text not null,
+  reward_btc numeric(20,8) not null check (reward_btc > 0),
+  balance_btc numeric(20,8) not null check (balance_btc >= 0),
+  status text not null check (status in ('OPEN + FUNDED','OPEN + UNFUNDED','SOLVED + FUNDED','SOLVED + EMPTY','UNKNOWN')),
+  rules text not null,
+  provenance jsonb not null,
+  verification jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_challenge_registry_status on challenge_registry(status);
+
 create table if not exists jobs (
   id uuid primary key,
   puzzle_id text not null,
@@ -108,6 +124,7 @@ create index if not exists idx_workers_account on workers(account_id);
 create index if not exists idx_jobs_puzzle on jobs(puzzle_id);
 create index if not exists idx_claims_worker on work_claims(worker_id);
 create index if not exists idx_reward_events_account on reward_events(account_id);
+create unique index if not exists uq_reward_event_puzzle_account on reward_events(puzzle_id,account_id) where settlement_status <> 'VOID';
 
 
 create table if not exists audit_events (
