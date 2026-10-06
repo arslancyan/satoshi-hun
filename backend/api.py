@@ -310,11 +310,7 @@ def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(acc
     enforce_rate_limit(request, "write")
     if body.scope != "public-reward-challenge":
         raise HTTPException(400, "Only public-reward-challenge jobs are allowed")
-    jid = uuid4()
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("insert into jobs(id,puzzle_id,scope) values(%s,%s,%s)", (jid, body.puzzle_id, body.scope))
-    return {"id":str(jid),"puzzle_id":body.puzzle_id,"status":"QUEUED"}
+    raise HTTPException(501, "Jobs can only be created by the verified challenge-ingestion pipeline.")
 
 
 @app.post("/jobs/{job_id}/assign")
@@ -387,6 +383,7 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id:
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
+            expire_stale_assignments(cur)
             row=assignment_for_worker(cur,assignment_id,token_worker_id)
             if not row: raise HTTPException(404,"Assignment not found")
             if row[3]!="RUNNING": raise HTTPException(409,f"Assignment is {row[3]}")
@@ -476,9 +473,10 @@ def public_job_audit(job_id: UUID):
 def verify_job_audit(job_id: UUID):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("select event_type,entity_type,entity_id,account_id,worker_id,payload,previous_hash,event_hash from audit_events where (entity_type='job' and entity_id=%s) or (entity_type='assignment' and entity_id in (select id::text from job_assignments where job_id=%s)) order by created_at asc,id asc", (str(job_id), job_id))
+            cur.execute("select event_type,entity_type,entity_id,account_id,worker_id,payload,previous_hash,event_hash from audit_events order by created_at asc,id asc")
             events=cur.fetchall()
     previous=None
+    valid_events=0
     for e in events:
         canonical=json.dumps({
             "event_type":e[0],"entity_type":e[1],"entity_id":e[2],
@@ -488,10 +486,11 @@ def verify_job_audit(job_id: UUID):
         }, sort_keys=True, separators=(",", ":"), default=str).encode()
         expected=hashlib.sha256(canonical).hexdigest()
         if e[6] != previous or e[7] != expected:
-            return {"valid":False,"events_checked":events.index(e)+1,"reason":"audit-chain-integrity-failure"}
+            return {"valid":False,"events_checked":valid_events,"reason":"audit-chain-integrity-failure"}
+        if e[1] == "job" and e[2] == str(job_id):
+            valid_events += 1
         previous=e[7]
-    return {"valid":True,"events_checked":len(events),"head_hash":previous}
-
+    return {"valid":True,"events_checked":valid_events,"head_hash":previous}
 
 @app.get("/audit/account")
 def audit_account(account_id: UUID = Depends(account_id_from_auth)):
