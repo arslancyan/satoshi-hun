@@ -15,6 +15,7 @@ from pydantic import BaseModel, EmailStr, Field
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 SESSION_TTL = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
+ASSIGNMENT_TIMEOUT_SECONDS = max(30, int(os.environ.get("ASSIGNMENT_TIMEOUT_SECONDS", "120")))
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "")
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.0")
@@ -99,6 +100,7 @@ class AssignmentCreate(BaseModel):
 
 
 class ClaimCreate(BaseModel):
+    assignment_id: UUID
     worker_id: UUID
     candidate_hash: str = Field(min_length=32, max_length=128)
     result_status: str = Field(default="TESTED", pattern="^(TESTED|VERIFIED|REJECTED)$")
@@ -244,6 +246,7 @@ def assign_job(job_id: UUID, body: AssignmentCreate, request: Request, account_i
     aid = uuid4()
     with db() as conn:
         with conn.cursor() as cur:
+            expire_stale_assignments(cur)
             cur.execute("select id,status from jobs where id=%s and scope='public-reward-challenge' for update", (job_id,))
             job = cur.fetchone()
             if not job:
@@ -259,6 +262,22 @@ def assign_job(job_id: UUID, body: AssignmentCreate, request: Request, account_i
     return {"assignment_id":str(aid),"job_id":str(job_id),"worker_id":str(body.worker_id),"status":"ASSIGNED"}
 
 
+def expire_stale_assignments(cur):
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=ASSIGNMENT_TIMEOUT_SECONDS)
+    cur.execute(
+        "update job_assignments set status='EXPIRED',expired_at=now() "
+        "where status in ('ASSIGNED','RUNNING') "
+        "and coalesce(last_heartbeat_at,assigned_at) < %s returning job_id",
+        (cutoff,),
+    )
+    for (job_id,) in cur.fetchall():
+        cur.execute(
+            "update jobs set status='QUEUED',completed_at=null "
+            "where id=%s and status in ('RUNNING','QUEUED')",
+            (job_id,),
+        )
+
+
 def assignment_for_account(cur, assignment_id: UUID, account_id: UUID):
     cur.execute("select a.id,a.job_id,a.worker_id,a.status,j.status from job_assignments a join workers w on w.id=a.worker_id join jobs j on j.id=a.job_id where a.id=%s and w.account_id=%s for update", (assignment_id,account_id))
     return cur.fetchone()
@@ -270,6 +289,7 @@ def start_assignment(assignment_id: UUID, request: Request, account_id: UUID = D
     now = datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
+            expire_stale_assignments(cur)
             row=assignment_for_account(cur,assignment_id,account_id)
             if not row: raise HTTPException(404,"Assignment not found")
             if row[3]!="ASSIGNED": raise HTTPException(409,f"Assignment is {row[3]}")
@@ -314,9 +334,17 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, account_id: UUID = 
     enforce_rate_limit(request, "write")
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("select id from jobs where id=%s and scope='public-reward-challenge'",(job_id,))
-            if not cur.fetchone(): raise HTTPException(404,"Job not found")
-            if not worker_owned(cur,body.worker_id,account_id): raise HTTPException(400,"Selected worker is not active or does not belong to this account")
+            expire_stale_assignments(cur)
+            cur.execute(
+                "select a.id,a.worker_id,a.status,j.status from job_assignments a "
+                "join jobs j on j.id=a.job_id join workers w on w.id=a.worker_id "
+                "where a.id=%s and a.job_id=%s and w.account_id=%s for update",
+                (body.assignment_id, job_id, account_id),
+            )
+            assignment = cur.fetchone()
+            if not assignment: raise HTTPException(404,"Assignment not found")
+            if assignment[1] != body.worker_id: raise HTTPException(400,"Worker does not match assignment")
+            if assignment[2] not in ("ASSIGNED","RUNNING","COMPLETED"): raise HTTPException(409,"Assignment is no longer claimable")
             cid=uuid4()
             try:
                 cur.execute("insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) values(%s,%s,%s,%s,%s,%s,now())",(cid,job_id,body.worker_id,body.candidate_hash,body.result_status,body.cpu_seconds))
@@ -329,7 +357,23 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, account_id: UUID = 
                     "where id=%s and status in ('RUNNING','COMPLETED')",
                     (job_id,),
                 )
-    return {"accepted":True,"claim_id":str(cid),"result_status":body.result_status}
+    return {"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id)}
+
+
+@app.get("/audit/job/{job_id}")
+def public_job_audit(job_id: UUID):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,puzzle_id,status,created_at,completed_at from jobs where id=%s and scope='public-reward-challenge'", (job_id,))
+            job=cur.fetchone()
+            if not job: raise HTTPException(404,"Job not found")
+            cur.execute("select count(*),coalesce(sum(verified_seconds),0) from job_assignments where job_id=%s and status='COMPLETED'", (job_id,))
+            assignments,seconds=cur.fetchone()
+            cur.execute("select count(*),count(*) filter (where result_status='VERIFIED'),count(*) filter (where result_status='REJECTED') from work_claims where job_id=%s", (job_id,))
+            claims,verified,rejected=cur.fetchone()
+    return {"job_id":str(job[0]),"puzzle_id":job[1],"status":job[2],"created_at":job[3],"completed_at":job[4],
+            "completed_assignments":assignments,"contribution_seconds":seconds,"claims":claims,
+            "verified_claims":verified,"rejected_claims":rejected}
 
 
 @app.get("/audit/account")
@@ -342,7 +386,12 @@ def audit_account(account_id: UUID = Depends(account_id_from_auth)):
             seconds=cur.fetchone()[0]
             cur.execute("select count(*) from reward_events where account_id=%s and settlement_status in ('APPROVED','SETTLED')",(account_id,))
             rewards=cur.fetchone()[0]
-    return {"workers":workers,"verified_worker_seconds":seconds,"approved_reward_events":rewards}
+            cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='VERIFIED'",(account_id,))
+            verified_claims=cur.fetchone()[0]
+            cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='REJECTED'",(account_id,))
+            rejected_claims=cur.fetchone()[0]
+    reliability=round((verified_claims/(verified_claims+rejected_claims))*100,2) if verified_claims+rejected_claims else 0.0
+    return {"workers":workers,"verified_worker_seconds":seconds,"approved_reward_events":rewards,"verified_claims":verified_claims,"rejected_claims":rejected_claims,"reliability_score":reliability}
 
 
 @app.post("/jobs/{job_id}/verify")
