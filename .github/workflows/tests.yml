@@ -18,8 +18,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest
           pip install -r backend/requirements.txt
+      - name: Compile Python modules
+        run: python -m compileall -q backend *.py tests
       - name: Run tests
         run: pytest -q
+      - name: Run production preflight contract
+        env:
+          SATOSHI_HUNT_ENV: production
+          DATABASE_URL: postgresql://ci/example
+          JWT_SECRET: ci-jwt-secret-012345678901234567890123
+          CHALLENGE_INGESTION_KEY: ci-ingestion-secret-012345678901234567890123
+          OWNER_EMAIL: owner@example.com
+          RATE_LIMIT_REDIS_URL: redis://ci/example
+          FRONTEND_ORIGIN: https://example.com
+        run: python production_check.py
 
   postgres-schema:
     runs-on: ubuntu-latest
