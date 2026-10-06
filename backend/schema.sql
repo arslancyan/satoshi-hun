@@ -46,7 +46,8 @@ create table if not exists job_assignments (
   started_at timestamptz,
   completed_at timestamptz,
   last_heartbeat_at timestamptz,
-  verified_seconds bigint not null default 0 check (verified_seconds >= 0)
+  verified_seconds bigint not null default 0 check (verified_seconds >= 0),
+  expired_at timestamptz
 );
 
 create unique index if not exists uq_active_job_assignment
@@ -55,6 +56,7 @@ create unique index if not exists uq_active_job_assignment
 
 create index if not exists idx_assignments_worker on job_assignments(worker_id);
 create index if not exists idx_assignments_job on job_assignments(job_id);
+create index if not exists idx_assignments_stale on job_assignments(status,last_heartbeat_at);
 
 create table if not exists work_claims (
   id uuid primary key,
