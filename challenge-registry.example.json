@@ -1,0 +1,20 @@
+{
+  "id": "REPLACE-ME",
+  "title": "Public Reward Challenge",
+  "type": "custom",
+  "reward_btc": 0,
+  "balance_btc": 0,
+  "status": "UNKNOWN",
+  "rules": "public-reward-challenge",
+  "provenance": {
+    "url": "https://replace-with-authoritative-source",
+    "source_id": "REPLACE-ME",
+    "checked_at": null
+  },
+  "verification": {
+    "method": "REPLACE-WITH-PUBLISHED-RULE",
+    "source_id": "REPLACE-ME",
+    "checked_at": null,
+    "fingerprint": null
+  }
+}
