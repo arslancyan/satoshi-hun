@@ -8,7 +8,98 @@
 <style>
 *{box-sizing:border-box}body{margin:0;background:#080b12;color:#e9eef7;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif}.app{max-width:1250px;margin:auto;padding:24px}.topbar{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1b2230;padding:8px 0 22px}.brand{font-weight:900;letter-spacing:.12em;font-size:20px}.sub,.small,.eyebrow{color:#7f8da3;font-size:11px;letter-spacing:.14em}.worker-pill{border:1px solid #243044;background:#0e141e;padding:10px 14px;border-radius:999px;font-size:11px;font-weight:800}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#596579;margin-right:8px}.dot.on{background:#48e0a4;box-shadow:0 0 14px #48e0a4}.hero{display:grid;grid-template-columns:1fr 300px;gap:20px;padding:45px 0 30px}.hero h1{font-size:44px;line-height:1.05;margin:10px 0 14px;letter-spacing:-.04em}.hero p{max-width:680px;color:#9ca9bb;line-height:1.7}.hero-card,.panel,.stat{background:linear-gradient(145deg,#101722,#0b1018);border:1px solid #1b2636;border-radius:18px}.hero-card{padding:22px;display:flex;flex-direction:column;justify-content:center}.hero-card strong{font-size:19px;margin:7px 0}.hero-card span:last-child{color:#78869a;font-size:12px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stat{padding:18px}.stat b{display:block;font-size:26px;margin-top:5px}.stat span{font-size:11px;color:#758399;text-transform:uppercase;letter-spacing:.12em}.panel{margin-top:18px;padding:20px}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:16px}.panel h2{font-size:15px;margin:0}.panel-head span{color:#66758a;font-size:11px}.filters{display:flex;gap:6px;flex-wrap:wrap}.filters button{background:#0c121c;border:1px solid #222d3d;color:#8997aa;border-radius:8px;padding:7px 10px;font-size:11px;cursor:pointer}.filters button.active{color:#dce7f5;border-color:#52708f;background:#162231}.puzzles{display:grid;gap:8px}.puzzle{display:grid;grid-template-columns:1.3fr .7fr .7fr .7fr auto;align-items:center;gap:15px;padding:15px;border:1px solid #182231;background:#0c121a;border-radius:12px}.title{font-weight:750}.muted{color:#718096;font-size:11px;margin-top:4px}.reward{font-weight:800}.badge{display:inline-flex;width:max-content;padding:5px 8px;border-radius:7px;font-size:10px;font-weight:800}.funded{background:#123225;color:#66e0a8}.empty{background:#242b35;color:#8d99a8}.solved{background:#24263a;color:#a9a5ef}.open{background:#132b3a;color:#79cfff}.unfunded{background:#2d281c;color:#d8b86a}.unknown{background:#25262a;color:#9ba1aa}.run{background:#dcefff;color:#08121d;border:0;border-radius:8px;padding:9px 13px;font-weight:900;cursor:pointer}.run:disabled{opacity:.35;cursor:not-allowed}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}.worker-console{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.console-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #17202c;font-size:12px;color:#728096}.console-row b{color:#d9e2ee}.progress{height:7px;background:#131b26;border-radius:99px;overflow:hidden;margin:18px 0}.progress i{display:block;height:100%;width:0;background:#55d6ff;transition:width .3s}.log{font-size:11px;color:#728096;min-height:80px;white-space:pre-wrap}.trust-grid,.roadmap-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.trust-card,.roadmap-grid>div{padding:14px;border:1px solid #192433;border-radius:10px;background:#0c121a}.trust-card b,.roadmap-grid strong{display:block;font-size:11px;letter-spacing:.08em;color:#dce7f5}.trust-card span,.roadmap-grid p{display:block;color:#7f8da3;font-size:11px;line-height:1.6;margin:8px 0 0}.safe{display:grid;gap:12px;color:#aab5c4;font-size:12px}.safe div{padding:11px 12px;border:1px solid #192433;border-radius:9px;background:#0c121a}@media(max-width:800px){.hero,.grid2,.trust-grid,.roadmap-grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.puzzle{grid-template-columns:1fr 1fr}.puzzle button{grid-column:1/-1}.hero h1{font-size:34px}}
 </style>
-</head>
+<style id="satoshi-glow-theme">
+:root{
+  --bg:#050706;
+  --panel:#0a0d0b;
+  --panel2:#0d120f;
+  --line:rgba(93,255,126,.16);
+  --green:#55ff7a;
+  --green2:#16e56a;
+  --orange:#ff9f1c;
+  --orange2:#f7931a;
+  --text:#edf7ef;
+  --muted:#82938a;
+  --green-glow:0 0 18px rgba(85,255,122,.24),0 0 42px rgba(22,229,106,.10);
+  --orange-glow:0 0 18px rgba(255,159,28,.30),0 0 46px rgba(247,147,26,.13);
+}
+html,body{
+  background:
+    radial-gradient(circle at 88% 8%,rgba(247,147,26,.12),transparent 30%),
+    radial-gradient(circle at 8% 20%,rgba(22,229,106,.10),transparent 32%),
+    radial-gradient(circle at 55% 100%,rgba(85,255,122,.055),transparent 36%),
+    var(--bg)!important;
+  color:var(--text)!important;
+}
+body:before{
+  background:linear-gradient(90deg,rgba(85,255,122,.025),transparent 35%,rgba(247,147,26,.025))!important;
+}
+header,.nav,.topbar,.hero,.panel,.card,.stat,.console,.worker-card,.challenge-card{
+  border-color:var(--line)!important;
+  background:linear-gradient(145deg,rgba(10,15,12,.94),rgba(5,8,6,.88))!important;
+  box-shadow:0 10px 40px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.025);
+}
+h1,h2,h3,.brand,.logo{
+  color:#f2fff4!important;
+  text-shadow:0 0 20px rgba(85,255,122,.14);
+}
+.brand,.logo{
+  filter:drop-shadow(0 0 10px rgba(85,255,122,.25));
+}
+button,.button{
+  border-color:rgba(85,255,122,.35)!important;
+  color:var(--green)!important;
+  background:rgba(22,229,106,.055)!important;
+  box-shadow:var(--green-glow)!important;
+}
+button:hover,.button:hover{
+  border-color:var(--green)!important;
+  background:rgba(22,229,106,.11)!important;
+}
+a{color:var(--green)!important}
+input,select,textarea{
+  background:#070b08!important;
+  color:var(--text)!important;
+  border-color:rgba(85,255,122,.18)!important;
+}
+input:focus,select:focus,textarea:focus{
+  border-color:var(--green)!important;
+  box-shadow:0 0 0 2px rgba(85,255,122,.07),var(--green-glow)!important;
+  outline:none;
+}
+.stat-value,.metric,.number{color:var(--green)!important;text-shadow:0 0 14px rgba(85,255,122,.22)}
+.badge,.status,.online,.success,.verified{
+  color:var(--green)!important;
+  border-color:rgba(85,255,122,.35)!important;
+  box-shadow:var(--green-glow);
+}
+.reward,.btc,.bitcoin,.funded{
+  color:var(--orange)!important;
+  text-shadow:var(--orange-glow);
+}
+.orange,.btc-value{
+  color:var(--orange)!important;
+}
+.hero h1{
+  background:linear-gradient(100deg,#f4fff5 5%,var(--green) 48%,var(--orange) 100%);
+  -webkit-background-clip:text;
+  background-clip:text;
+  color:transparent!important;
+  text-shadow:none;
+}
+.progress,.meter{
+  background:rgba(255,255,255,.045)!important;
+}
+.progress>*,.meter>*{
+  background:linear-gradient(90deg,var(--green2),var(--green),var(--orange))!important;
+  box-shadow:0 0 14px rgba(85,255,122,.28),0 0 18px rgba(255,159,28,.12);
+}
+.panel-head h2:after{
+  background:linear-gradient(90deg,var(--green),var(--orange))!important;
+  box-shadow:0 0 12px rgba(85,255,122,.35);
+}
+::selection{background:rgba(247,147,26,.28);color:white}
+</style></head>
 <body>
 <div class="app">
 <header class="topbar"><div><div class="brand">SATOSHI HUNT</div><div class="sub">PUBLIC PUZZLE INTELLIGENCE · HYBRID SOLVER</div></div><div class="worker-pill"><span id="dot" class="dot"></span><span id="workerState">LOCAL WORKER OFFLINE</span></div></header>
