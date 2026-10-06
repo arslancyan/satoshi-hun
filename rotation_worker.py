@@ -76,7 +76,53 @@ def run_once():
                        values(gen_random_uuid(),%s,'EXTERNAL_SOLVED',%s,%s,%s,'EXTERNAL_SOLVED')""",
                     (row[0], evidence["evidence_url"], evidence["evidence_id"], row[1]),
                 )
-                return {"rotated": True, "retired_id": row[0], "evidence": evidence}
+                # Stop new work on the externally solved challenge.
+                cur.execute(
+                    "update jobs set status='EXPIRED', completed_at=now() "
+                    "where puzzle_id=%s and scope='public-reward-challenge' "
+                    "and status in ('QUEUED','RUNNING')",
+                    (row[0],),
+                )
+                # Select the highest-funded independently verified replacement.
+                cur.execute(
+                    """select id from challenge_registry
+                       where status='OPEN + FUNDED' and balance_btc > 0 and id <> %s
+                       and provenance->>'url' is not null
+                       and verification->>'method' is not null
+                       order by balance_btc desc, updated_at desc, id asc
+                       limit 1""",
+                    (row[0],),
+                )
+                replacement = cur.fetchone()
+                if not replacement:
+                    cur.execute(
+                        """insert into challenge_rotation_events
+                           (id,challenge_id,event_type,previous_status,next_status)
+                           values(gen_random_uuid(),%s,'NO_ELIGIBLE_REPLACEMENT',
+                                  'EXTERNAL_SOLVED','EXTERNAL_SOLVED')""",
+                        (row[0],),
+                    )
+                    return {"rotated": False, "retired_id": row[0],
+                            "replacement": None, "evidence": evidence}
+                replacement_id = replacement[0]
+                cur.execute(
+                    """insert into jobs(id,puzzle_id,scope,status)
+                       select gen_random_uuid(),%s,'public-reward-challenge','QUEUED'
+                       where not exists (
+                         select 1 from jobs where puzzle_id=%s
+                         and scope='public-reward-challenge'
+                         and status in ('QUEUED','RUNNING')
+                       )""",
+                    (replacement_id, replacement_id),
+                )
+                cur.execute(
+                    """insert into challenge_rotation_events
+                       (id,challenge_id,event_type,previous_status,next_status)
+                       values(gen_random_uuid(),%s,'ROTATED_IN',null,'OPEN + FUNDED')""",
+                    (replacement_id,),
+                )
+                return {"rotated": True, "retired_id": row[0],
+                        "replacement": replacement_id, "evidence": evidence}
             return {"rotated": False, "status": row[1], "evidence": evidence}
 
 
