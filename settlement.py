@@ -6,6 +6,9 @@ custodies Bitcoin and never reads wallet credentials.
 from decimal import Decimal
 from economy import split_reward
 
+WORKER_SHARE = Decimal("0.85")
+PLATFORM_FEE = Decimal("0.15")
+
 VALID_TRANSITIONS = {
     "REVIEW": {"APPROVED", "VOID"},
     "APPROVED": {"SETTLED", "VOID"},
