@@ -66,6 +66,7 @@ async def run_assignment(assignment):
         if assignment["status"] == "ASSIGNED":
             api_call(f"/assignments/{aid}/start")
         await asyncio.to_thread(api_call, f"/assignments/{aid}/heartbeat")
+        # Keep the assignment lease alive while the worker is active.
 
         for i in range(0, 101, 10):
             await asyncio.sleep(0.08)
@@ -78,6 +79,7 @@ async def run_assignment(assignment):
             f"/jobs/{job_id}/claims",
             "POST",
             {
+                "assignment_id": aid,
                 "worker_id": WORKER_ID,
                 "candidate_hash": candidate_hash(job_id),
                 "result_status": "TESTED",
