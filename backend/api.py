@@ -1623,7 +1623,7 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
 
 def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash):
     cur.execute(
-        "select j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification "
+        "select j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification,c.payout "
         "from jobs j join challenge_registry c on c.id=j.puzzle_id "
         "where j.id=%s and j.scope='public-reward-challenge' for update",
         (job_id,),
@@ -2197,7 +2197,7 @@ def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(accoun
                     withdrawal_queued = False
                 record_audit_event(
                     cur,"VERIFIED","job",job_id,account_id,worker_id,
-                    {"candidate_hash":candidate_hash,"reward_status":"APPROVED","auto_credit":"worker_share","withdrawal_queued":withdrawal_queued}
+                    {"candidate_hash":candidate_hash,"reward_status":"APPROVED","auto_credit":"worker_share","withdrawal_queued":withdrawal_queued,"auto_credited":True}
                 )
                 return {"verified":True,"claim_id":str(claim_id),"candidate_hash":candidate_hash,
                         "reward_status":"APPROVED","reward_id":str(reward_id),
@@ -2233,6 +2233,37 @@ def update_payout_address(body: PayoutAddressUpdate, request: Request, account_i
             idempotency_store(cur, account_id, request, payload, response)
             return response
 
+
+
+@app.get("/account/notifications")
+def account_notifications(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select id,event_type,title,message,metadata,read_at,created_at "
+                "from notifications where account_id=%s order by created_at desc limit 50",
+                (account_id,),
+            )
+            rows=cur.fetchall()
+    return {"notifications":[
+        {"id":str(r[0]),"event_type":r[1],"title":r[2],"message":r[3],
+         "metadata":r[4],"read_at":r[5],"created_at":r[6]}
+        for r in rows
+    ]}
+
+@app.post("/account/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update notifications set read_at=coalesce(read_at,now()) "
+                "where id=%s and account_id=%s returning id",
+                (notification_id, account_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(404, "Notification not found")
+    return {"ok":True,"notification_id":str(notification_id),"read":True}
 
 @app.get("/account/rewards")
 def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
