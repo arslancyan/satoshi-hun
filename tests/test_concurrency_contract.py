@@ -2,6 +2,12 @@ from pathlib import Path
 SQL=Path("backend/schema.sql").read_text()
 API=Path("backend/api.py").read_text()
 
+def test_database_enforces_one_active_assignment_per_worker():
+    assert "uq_active_worker_assignment" in SQL
+    assert "on job_assignments(worker_id)" in SQL
+    assert "where status in ('ASSIGNED','RUNNING')" in SQL
+
+
 def test_database_enforces_one_active_assignment_per_job():
     assert "uq_active_job_assignment" in SQL
     assert "where status in ('ASSIGNED','RUNNING')" in SQL
