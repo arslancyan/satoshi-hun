@@ -1588,10 +1588,12 @@ def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(accoun
                     payout_row = cur.fetchone()
                     if payout_row and payout_row[0]:
                         cur.execute(
-                            "select coalesce(sum(amount_btc),0) from withdrawal_requests where account_id=%s and status in ('QUEUED','PROCESSING')",
-                            (account_id,),
+                            "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
+                            "where account_id=%s and available_btc >= %s",
+                            (event["worker_share_btc"], account_id, event["worker_share_btc"]),
                         )
-                        pending = Decimal(str(cur.fetchone()[0] or 0))
+                        if cur.rowcount != 1:
+                            raise HTTPException(500, "Reward balance reservation failed")
                         cur.execute(
                             "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) "
                             "values(%s,%s,%s,%s,'QUEUED')",
