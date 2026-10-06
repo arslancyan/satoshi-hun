@@ -19,3 +19,9 @@ def test_worker_auth_routes_exist():
     routes = {route.path for route in app.routes}
     assert "/workers/{worker_id}/revoke" in routes
     assert "/audit/job/{job_id}/verify" in routes
+
+def test_untrusted_verified_claim_is_blocked_in_route_source():
+    from backend.api import claim
+    import inspect
+    source = inspect.getsource(claim)
+    assert 'VERIFIED claims require a server-side challenge adapter.' in source
