@@ -1,6 +1,7 @@
 import os
 import hashlib
 import json
+import logging
 import secrets
 import time
 from collections import defaultdict, deque
@@ -55,10 +56,10 @@ def enforce_rate_limit(request: Request, bucket: str) -> None:
             return
         except HTTPException:
             raise
-        except Exception:
+        except Exception as exc:
             # Redis failure falls back to local development limiter rather than
             # silently disabling abuse protection.
-            pass
+            logging.warning("Redis rate limiter unavailable: %s", type(exc).__name__)
     now = time.monotonic()
     key = (bucket, client)
     events = _rate_events[key]
@@ -206,8 +207,10 @@ def me(account_id: UUID = Depends(account_id_from_auth)):
 
 
 def worker_owned(cur, worker_id: UUID, account_id: UUID, active_only=True):
-    clause = " and status='ACTIVE'" if active_only else ""
-    cur.execute(f"select id from workers where id=%s and account_id=%s{clause}", (worker_id, account_id))
+    if active_only:
+        cur.execute("select id from workers where id=%s and account_id=%s and status='ACTIVE'", (worker_id, account_id))
+    else:
+        cur.execute("select id from workers where id=%s and account_id=%s", (worker_id, account_id))
     return cur.fetchone()
 
 
