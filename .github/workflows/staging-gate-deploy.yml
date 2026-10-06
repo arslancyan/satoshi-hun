@@ -1,0 +1,62 @@
+name: staging-gate-and-railway-deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: satoshi_hunt
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d satoshi_hunt"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r backend/requirements.txt
+      - name: Initialize staging
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/satoshi_hunt
+          SATOSHI_HUNT_ENV: staging
+        run: python tools/init_db.py
+      - name: Start API
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/satoshi_hunt
+          JWT_SECRET: staging-e2e-secret
+          SATOSHI_HUNT_ENV: staging
+          RATE_LIMIT_REDIS_URL: redis://127.0.0.1:6379/0
+          OWNER_EMAIL: owner@example.com
+        run: |
+          uvicorn backend.api:app --host 127.0.0.1 --port 8000 >/tmp/api.log 2>&1 &
+          for i in {1..30}; do curl -fsS http://127.0.0.1:8000/health && break || sleep 1; done
+      - name: Full settlement E2E
+        env:
+          SATOSHI_HUNT_API: http://127.0.0.1:8000
+        run: python tools/staging_e2e.py
+
+  deploy:
+    needs: staging
+    if: ${{ success() && secrets.RAILWAY_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      - name: Deploy API after staging gate
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service satoshi-hunt-api --environment production --detach
