@@ -11,10 +11,11 @@ def main():
         "balance_btc":0.01,
         "status":"OPEN + FUNDED",
         "rules":"public-reward-challenge",
-        "provenance":{"url":"https://example.com/challenge","source_id":"STAGING-HASH-001"},
+        "provenance":{"url":"https://example.com/challenge","source_id":"STAGING-HASH-001","checked_at":"2026-10-06T00:00:00Z"},
         "verification":{
             "method":"hash-commitment",
             "source_id":"STAGING-HASH-001",
+            "checked_at":"2026-10-06T00:00:00Z",
             "fingerprint":"staging",
             "expected_candidate_hash":"abc123",
             "funding_match":True,
