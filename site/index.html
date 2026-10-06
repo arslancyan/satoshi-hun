@@ -348,13 +348,13 @@ async function loadRegistry(){try{const r=await fetch("puzzles.json",{cache:"no-
   guide.className="intro-guide";
   guide.innerHTML=
     '<div class="guide-card"><span class="eyebrow">NEW TO SATOSHI HUNT?</span><h2>Choose a public puzzle and contribute your own compute.</h2><p>Satoshi Hunt coordinates public computational puzzles. You choose what to work on, run the approved work locally on your device, and the system records verifiable contribution. You are never asked for a Bitcoin private key or seed phrase.</p><div class="guide-steps"><div class="guide-step"><b>01 · CHOOSE</b><span>Pick a puzzle from the public list.</span></div><div class="guide-step"><b>02 · RUN</b><span>Start the selected work on your local worker.</span></div><div class="guide-step"><b>03 · VERIFY</b><span>Progress and results are checked before credit.</span></div></div></div>'+
-    '<div class="guide-card"><span class="eyebrow">CURRENT MODE</span><h2>Funding is paused</h2><p>Demo puzzles are shown for interface testing. No reward is currently live or claimable.</p><div style="margin-top:15px;color:#ffad36;font-size:11px;font-weight:800">DEMO / NO LIVE FUNDING</div></div>';
+    '';
   hero.insertAdjacentElement("afterend",guide);
 
   const wb=document.createElement("section");
   wb.id="puzzleWorkbench";
   wb.className="workbench";
-  wb.innerHTML='<div class="workbench-head"><div><span class="eyebrow">MAIN WORKSPACE</span><h2>Choose &amp; Run a Puzzle</h2><p>This is where you select the challenge and, when eligible, start the local worker.</p></div><div class="workbench-status">FUNDING PAUSED · DEMO MODE</div></div>';
+  wb.innerHTML='<div class="workbench-head"><div><span class="eyebrow">MAIN WORKSPACE</span><h2>Choose &amp; Run a Puzzle</h2><p>Select a challenge, review its requirements, and start the local worker when it is available.</p></div></div>';
   guide.insertAdjacentElement("afterend",wb);
   wb.appendChild(available);
   wb.appendChild(detail);
