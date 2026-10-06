@@ -1602,7 +1602,7 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
             if not assignment: raise HTTPException(404,"Assignment not found")
             if token_worker_id != body.worker_id or assignment[1] != token_worker_id:
                 raise HTTPException(403,"Worker token does not match claim worker")
-            if assignment[2] not in ("ASSIGNED","RUNNING"): raise HTTPException(409,"Assignment is no longer claimable")
+            if assignment[2] != "RUNNING": raise HTTPException(409,"Assignment must be RUNNING before claims are accepted")
             if assignment[3] not in ("QUEUED","RUNNING"): raise HTTPException(409,"Job is no longer accepting claims")
             if body.result_status == "VERIFIED":
                 raise HTTPException(403, "VERIFIED claims require a server-side challenge adapter.")
