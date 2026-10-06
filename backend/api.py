@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from verifier import verify_candidate_hash
 from settlement import build_reward_event
+from protocol_v1 import proof_hash, capability_score, adaptive_ranges, reliability_score
+from anti_cheat import security_flags
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -172,12 +174,132 @@ def worker_id_from_token(authorization: str = Header(default="")) -> UUID:
     return row[0]
 
 
+
+
+class CapabilityUpdate(BaseModel):
+    cpu_threads: int = Field(default=1, ge=1, le=1024)
+    memory_mb: int = Field(default=512, ge=1)
+    adapter_types: list[str] = Field(default_factory=list, max_length=50)
+
+
+class CheckpointCreate(BaseModel):
+    assignment_id: UUID
+    cursor_start: int = Field(ge=0)
+    cursor_end: int = Field(gt=0)
+    cursor_next: int = Field(ge=0)
+    nonce: str = Field(default="", max_length=128)
+
+
+class CreatorChallenge(BaseModel):
+    challenge_id: str = Field(min_length=1, max_length=128)
+    terms: dict = Field(default_factory=dict)
+
+
 class ClaimCreate(BaseModel):
     assignment_id: UUID
     worker_id: UUID
     candidate_hash: str = Field(min_length=32, max_length=128)
     result_status: str = Field(default="TESTED", pattern="^(TESTED|REJECTED)$")
     cpu_seconds: int = Field(default=0, ge=0, le=86400)
+
+
+
+@app.put("/workers/{worker_id}/capabilities")
+def update_capabilities(worker_id: UUID, body: CapabilityUpdate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            if not worker_owned(cur, worker_id, account_id, active_only=True):
+                raise HTTPException(404, "Worker not found")
+            cur.execute(
+                "insert into worker_capabilities(worker_id,cpu_threads,memory_mb,adapter_types,updated_at) values(%s,%s,%s,%s::jsonb,now()) "
+                "on conflict(worker_id) do update set cpu_threads=excluded.cpu_threads,memory_mb=excluded.memory_mb,adapter_types=excluded.adapter_types,updated_at=now()",
+                (worker_id,body.cpu_threads,body.memory_mb,json.dumps(body.adapter_types)),
+            )
+            record_audit_event(cur,"WORKER_CAPABILITIES_UPDATED","worker",worker_id,account_id,worker_id,payload=body.model_dump())
+    return {"worker_id":str(worker_id),"capabilities":body.model_dump()}
+
+
+@app.post("/assignments/{assignment_id}/checkpoint")
+def checkpoint(assignment_id: UUID, body: CheckpointCreate, request: Request, worker_id: UUID = Depends(worker_id_from_token)):
+    enforce_rate_limit(request, "write")
+    if body.cursor_next > body.cursor_end or body.cursor_end <= body.cursor_start:
+        raise HTTPException(400, "Invalid checkpoint cursor")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select a.job_id,a.worker_id,a.status from job_assignments a where a.id=%s and a.worker_id=%s for update",
+                (assignment_id,worker_id),
+            )
+            row=cur.fetchone()
+            if not row or row[2] not in ("ASSIGNED","RUNNING"):
+                raise HTTPException(409,"Assignment is not active")
+            digest=proof_hash(row[0],assignment_id,body.cursor_start,body.cursor_end,body.cursor_next,body.nonce)
+            cur.execute(
+                "insert into job_checkpoints(id,job_id,assignment_id,cursor_start,cursor_end,cursor_next,checkpoint_hash) values(%s,%s,%s,%s,%s,%s,%s)",
+                (uuid4(),row[0],assignment_id,body.cursor_start,body.cursor_end,body.cursor_next,digest),
+            )
+            cur.execute(
+                "insert into work_proofs(id,assignment_id,worker_id,proof_type,proof_hash,nonce) values(%s,%s,%s,'CHECKPOINT',%s,%s) on conflict do nothing",
+                (uuid4(),assignment_id,worker_id,digest,body.nonce),
+            )
+    return {"checkpoint_hash":digest,"cursor_next":body.cursor_next}
+
+
+@app.post("/assignments/{assignment_id}/resume")
+def resume_assignment(assignment_id: UUID, request: Request, worker_id: UUID = Depends(worker_id_from_token)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select job_id,status from job_assignments where id=%s and worker_id=%s",
+                (assignment_id,worker_id),
+            )
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"Assignment not found")
+            cur.execute("select cursor_next from job_checkpoints where assignment_id=%s order by created_at desc limit 1",(assignment_id,))
+            cp=cur.fetchone()
+    return {"assignment_id":str(assignment_id),"status":row[1],"resume_cursor":cp[0] if cp else None}
+
+
+@app.get("/audit/explorer")
+def audit_explorer(limit: int = 100):
+    limit=max(1,min(limit,500))
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,event_type,entity_type,entity_id,account_id,worker_id,payload,event_hash,previous_hash,created_at from audit_events order by created_at desc,id desc limit %s",(limit,))
+            rows=cur.fetchall()
+    keys=["id","event_type","entity_type","entity_id","account_id","worker_id","payload","event_hash","previous_hash","created_at"]
+    return {"events":[dict(zip(keys,r)) for r in rows]}
+
+
+@app.get("/marketplace/challenges")
+def marketplace():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select o.id,o.challenge_id,c.title,c.challenge_type,o.reward_btc,o.estimated_difficulty,o.estimated_seconds,o.required_capabilities,o.status,o.published_at "
+                "from challenge_offers o join challenge_registry c on c.id=o.challenge_id "
+                "where o.status='PUBLISHED' order by o.published_at desc limit 100"
+            )
+            keys=["id","challenge_id","title","challenge_type","reward_btc","estimated_difficulty","estimated_seconds","required_capabilities","status","published_at"]
+            return {"offers":[dict(zip(keys,r)) for r in cur.fetchall()]}
+
+
+@app.post("/creator/challenges")
+def creator_challenge(body: CreatorChallenge, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id from challenge_registry where id=%s",(body.challenge_id,))
+            if not cur.fetchone(): raise HTTPException(404,"Challenge not found")
+            cur.execute(
+                "insert into challenge_creators(challenge_id,creator_account_id,terms) values(%s,%s,%s::jsonb) "
+                "on conflict(challenge_id) do update set creator_account_id=excluded.creator_account_id,terms=excluded.terms",
+                (body.challenge_id,account_id,json.dumps(body.terms)),
+            )
+            record_audit_event(cur,"CREATOR_REGISTERED","challenge",body.challenge_id,account_id,payload={"terms":body.terms})
+    return {"challenge_id":body.challenge_id,"creator_status":"PENDING"}
 
 
 @app.get("/network")
