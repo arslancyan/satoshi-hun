@@ -25,4 +25,5 @@ jobs:
           MEMPOOL_EXPLORER_BASE: https://mempool.space/api
           PUBLIC_CHALLENGE_SOURCE_URL: https://raw.githubusercontent.com/floflo777/open-crypto-puzzles/main/puzzles.json
           AUTHORITATIVE_ESCROW_SPEND_SLUGS: peter-todd-hash-collision-bounties-0-59btc
+          CHALLENGE_ID_ALIASES: peter-todd-hash-collision-bounties-0-59btc:peter-todd-hash-collision-bounties
         run: python live_source_worker.py
