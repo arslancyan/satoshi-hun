@@ -12,6 +12,8 @@ def normalize(p):
     q["rules"]=str(q.get("rules",""))
     q["provenance"]=q.get("provenance")
     q["verification"]=q.get("verification")
+    q["provenance"]=q.get("provenance")
+    q["verification"]=q.get("verification")
     return q
 
 def classify(p):
