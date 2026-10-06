@@ -192,8 +192,41 @@ a{color:#55ff7a!important;text-shadow:0 0 10px rgba(0,255,94,.18)}
 @media(max-width:800px){
  .intro-guide{grid-template-columns:1fr}.guide-steps{grid-template-columns:1fr}.workbench{padding:15px}.workbench-head{display:block}.workbench-status{display:inline-block;margin-top:10px}
 }
+</style><style id="video-background-theme">
+html,body{background:#020403!important}
+body{position:relative;isolation:isolate}
+#siteBackground{
+  position:fixed;inset:0;width:100vw;height:100vh;
+  object-fit:cover;object-position:center;
+  z-index:-3;pointer-events:none;
+  filter:saturate(.72) brightness(.38) contrast(1.03);
+  background:#020403;
+}
+#siteBackgroundOverlay{
+  position:fixed;inset:0;z-index:-2;pointer-events:none;
+  background:
+    linear-gradient(180deg,rgba(2,5,3,.52) 0%,rgba(2,5,3,.68) 48%,rgba(2,5,3,.84) 100%),
+    radial-gradient(circle at 50% 15%,rgba(0,255,94,.08),transparent 45%),
+    radial-gradient(circle at 92% 12%,rgba(247,147,26,.07),transparent 38%);
+}
+#siteBackgroundVignette{
+  position:fixed;inset:0;z-index:-1;pointer-events:none;
+  box-shadow:inset 0 0 180px rgba(0,0,0,.58);
+}
+@media(max-width:800px){
+  #siteBackground{filter:saturate(.62) brightness(.30) contrast(1.02)}
+  #siteBackgroundOverlay{background:linear-gradient(180deg,rgba(2,5,3,.64),rgba(2,5,3,.84))}
+}
+@media(prefers-reduced-motion:reduce){
+  #siteBackground{display:none}
+}
 </style></head>
 <body>
+<video id="siteBackground" autoplay muted loop playsinline preload="metadata" aria-hidden="true">
+  <source src="assets/background.mp4" type="video/mp4">
+</video>
+<div id="siteBackgroundOverlay" aria-hidden="true"></div>
+<div id="siteBackgroundVignette" aria-hidden="true"></div>
 <div class="app">
 <header class="topbar"><div><div class="brand">SATOSHI HUNT</div><div class="sub">PUBLIC PUZZLE INTELLIGENCE · HYBRID SOLVER</div></div><div class="worker-pill"><span id="dot" class="dot"></span><span id="workerState">LOCAL WORKER OFFLINE</span></div></header>
 <section class="hero"><div><span class="eyebrow">LIGHTWEIGHT CONTROL CENTER</span><h1>Find. Classify. Solve. Verify.</h1><p>Public reward-puzzle dashboard paired with a lightweight local CPU worker. The browser stays light; computation happens locally when available.</p></div><div class="hero-card"><div class="small">WORKER</div><strong id="workerMode">Not connected</strong><span id="workerMeta">Run worker.py locally to connect.</span></div></section>
@@ -375,4 +408,16 @@ async function loadRegistry(){try{const r=await fetch("puzzles.json",{cache:"no-
   const sh=solver.querySelector(":scope > .panel-head");
   if(sh){sh.querySelector("h2").textContent="3. Watch the work";sh.querySelector("span").textContent="Your local worker status and progress appear here.";}
 })();
-</script></body></html>
+</script><script id="video-background-behavior">
+(() => {
+  const v=document.getElementById("siteBackground");
+  if(!v) return;
+  v.muted=true;
+  v.defaultMuted=true;
+  v.playsInline=true;
+  const start=()=>v.play().catch(()=>{});
+  if(document.visibilityState==="visible") start();
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible") start();});
+})();
+</script>
+</body></html>
