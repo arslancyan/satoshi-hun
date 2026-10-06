@@ -1,1 +1,69 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Satoshi Hunt — Account</title><style>*{box-sizing:border-box}body{margin:0;background:#020403;color:#ecfff0;font-family:Inter,system-ui,sans-serif}.wrap{max-width:760px;margin:auto;padding:28px}.nav{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #55ff7a2b;padding-bottom:18px}.brand{font-weight:950;letter-spacing:.15em}.nav a{color:#55ff7a;text-decoration:none;font-size:11px;font-weight:900;margin-left:12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}.card{padding:20px;border:1px solid #55ff7a2e;border-radius:17px;background:linear-gradient(145deg,#07100a,#030705)}.full{grid-column:1/-1}h1{font-size:30px;margin:28px 0 5px}.muted,p{color:#82998b;font-size:11px;line-height:1.6}input{width:100%;padding:12px;margin:5px 0;background:#050906;color:#fff;border:1px solid #55ff7a2b;border-radius:9px}.btn{margin-top:8px;border:1px solid #55ff7a55;background:#00ff5e0b;color:#55ff7a;padding:10px 13px;border-radius:9px;font-weight:900;cursor:pointer}.primary{background:#55ff7a;color:#031007}.msg{min-height:18px;color:#ffb56a;font-size:11px;margin-top:8px}.ok{color:#55ff7a}.err{color:#ff8b8b}@media(max-width:700px){.grid{grid-template-columns:1fr}.full{grid-column:auto}.nav{align-items:flex-start;flex-direction:column}}</style></head><body><main class="wrap"><nav class="nav"><div><div class="brand">SATOSHI HUNT</div><div class="muted">ACCOUNT CENTER</div></div><div><a href="index.html">HOME</a><a href="marketplace.html">MARKETPLACE</a></div></nav><h1>Account</h1><div id="state" class="muted">Create an account or log in to start hunting.</div><section id="auth" class="grid"><div class="card"><h2>Sign Up</h2><p>Use a valid email and a password of at least 12 characters.</p><input id="suE" type="email" placeholder="Email"><input id="suP" type="password" placeholder="Password"><button class="btn primary" onclick="auth('/auth/register','suE','suP')">CREATE ACCOUNT</button><div id="suM" class="msg"></div></div><div class="card"><h2>Log In</h2><p>Already have an account? Sign in here.</p><input id="liE" type="email" placeholder="Email"><input id="liP" type="password" placeholder="Password"><button class="btn primary" onclick="auth('/auth/login','liE','liP')">LOG IN</button><div id="liM" class="msg"></div></div></section><section id="panel" class="card full" style="display:none"><h2>Payout wallet</h2><p>Save the BTC address for eligible account withdrawals. Never enter a private key or seed phrase.</p><input id="wallet" placeholder="bc1..."><button class="btn primary" onclick="saveWallet()">SAVE WALLET</button> <button class="btn" onclick="location.href='marketplace.html'">OPEN MARKETPLACE →</button> <button class="btn" onclick="logout()">LOG OUT</button><div id="wm" class="msg"></div></section></main><script>const API="https://satoshi-hunt-api-production.up.railway.app";let TOKEN=localStorage.getItem("satoshi_hunt_session")||"";function msg(id,t,ok){const e=document.getElementById(id);e.textContent=t;e.className="msg "+(ok?"ok":"err")}async function auth(path,e,p){const id=e.startsWith("su")?"suM":"liM";msg(id,"Connecting…");try{const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:document.getElementById(e).value.trim(),password:document.getElementById(p).value})});const d=await r.json();if(!r.ok)throw Error(d.detail||"Authentication failed");TOKEN=d.session;localStorage.setItem("satoshi_hunt_session",TOKEN);msg(id,"Authenticated.",true);await loadMe();if(new URLSearchParams(location.search).get("next"))setTimeout(()=>location.href=new URLSearchParams(location.search).get("next"),300)}catch(x){msg(id,x.message||"Unable to connect")}}async function loadMe(){if(!TOKEN)return;try{const r=await fetch(API+"/me",{headers:{Authorization:"Bearer "+TOKEN}});const d=await r.json();if(!r.ok)throw Error();document.getElementById("auth").style.display="none";document.getElementById("panel").style.display="block";document.getElementById("state").textContent="Logged in as "+d.email;document.getElementById("wallet").value=d.btc_payout_address||""}catch(e){TOKEN="";localStorage.removeItem("satoshi_hunt_session")}}async function saveWallet(){try{const r=await fetch(API+"/account/payout-address",{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN,"Idempotency-Key":"wallet-"+crypto.randomUUID()},body:JSON.stringify({btc_payout_address:document.getElementById("wallet").value.trim()})});const d=await r.json();if(!r.ok)throw Error(d.detail||"Wallet update failed");msg("wm","BTC payout address saved and validated.",true)}catch(e){msg("wm",e.message||"Wallet update failed")}}function logout(){localStorage.removeItem("satoshi_hunt_session");location.reload()}loadMe();</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Satoshi Hunt — Profile</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#020403;color:#ecfff0;font-family:Inter,system-ui,sans-serif}
+.wrap{max-width:900px;margin:auto;padding:22px}.nav{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #55ff7a2b;padding:14px 0}.brand{font-weight:950;letter-spacing:.15em}.muted{color:#82998b;font-size:11px;line-height:1.6}.nav a{color:#55ff7a;text-decoration:none;font-size:11px;font-weight:900;margin-left:14px}
+h1{font-size:34px;margin:35px 0 6px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}.card{padding:20px;border:1px solid #55ff7a2e;border-radius:17px;background:linear-gradient(145deg,#07100a,#030705);box-shadow:0 15px 45px #0007}.full{grid-column:1/-1}h2{margin:0 0 8px}input{width:100%;padding:13px;margin:7px 0;background:#050906;color:#fff;border:1px solid #55ff7a2b;border-radius:9px}.btn{border:1px solid #55ff7a55;background:#00ff5e0b;color:#55ff7a;padding:11px 14px;border-radius:9px;font-weight:900;cursor:pointer;margin:5px 5px 0 0}.primary{background:#55ff7a;color:#031007}.msg{min-height:18px;color:#ffb56a;font-size:11px;margin-top:9px}.ok{color:#55ff7a}.err{color:#ff8b8b}.eyebrow{color:#55ff7a;font-size:10px;letter-spacing:.18em;font-weight:900}.balance{font-size:28px;font-weight:950;color:#ff9f1c;margin-top:8px}.tag{display:inline-block;padding:4px 7px;border-radius:6px;background:#00ff5e10;color:#55ff7a;font-size:9px;font-weight:900}.hidden{display:none}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.full{grid-column:auto}.nav{align-items:flex-start;flex-direction:column;gap:8px}}
+</style>
+</head>
+<body>
+<main class="wrap">
+<nav class="nav"><div><div class="brand">SATOSHI HUNT</div><div class="muted">PROFILE · ACCOUNT CENTER</div></div><div><a href="index.html#marketplace">MARKETPLACE</a><a href="index.html">HOME</a></div></nav>
+<h1>Profile</h1>
+<div id="state" class="muted">Loading your account…</div>
+<section id="auth" class="grid">
+<div class="card"><h2>Sign Up</h2><p class="muted">Create a Satoshi Hunt account. Password must be at least 12 characters.</p><input id="suE" type="email" placeholder="Email"><input id="suP" type="password" placeholder="Password"><button class="btn primary" onclick="auth('/auth/register','suE','suP','suM')">CREATE ACCOUNT</button><div id="suM" class="msg"></div></div>
+<div class="card"><h2>Log In</h2><p class="muted">Sign in to manage your payout profile and worker.</p><input id="liE" type="email" placeholder="Email"><input id="liP" type="password" placeholder="Password"><button class="btn primary" onclick="auth('/auth/login','liE','liP','liM')">LOG IN</button><div id="liM" class="msg"></div></div>
+</section>
+<section id="profile" class="grid hidden">
+<div class="card full"><span class="eyebrow">ACCOUNT</span><h2 id="who">Your account</h2><p class="muted">Your profile is kept here. You do not need to enter the payout address again unless you want to change it.</p></div>
+<div class="card full"><span class="eyebrow">PAYOUT PROFILE</span><h2>BTC payout address</h2><p class="muted">Save the Bitcoin address where eligible rewards should be withdrawn. Never enter a seed phrase or private key.</p><input id="wallet" placeholder="bc1..."><button class="btn primary" onclick="saveWallet()">SAVE WALLET</button><div id="wm" class="msg"></div></div>
+<div class="card"><span class="eyebrow">WORKER</span><h2>Hunting worker</h2><div id="workerArea" class="muted">Loading worker status…</div></div>
+<div class="card"><span class="eyebrow">REWARDS</span><div id="rewardArea"><div class="muted">Loading reward balance…</div></div></div>
+<div class="card full"><button class="btn primary" onclick="location.href='index.html#marketplace'">OPEN LIVE MARKETPLACE</button><button class="btn" onclick="logout()">LOG OUT</button><div id="logoutMsg" class="msg"></div></div>
+</section>
+</main>
+<script>
+const API="https://satoshi-hunt-api-production.up.railway.app";let TOKEN=localStorage.getItem("satoshi_hunt_session")||"",WORKERS=[];
+const $=id=>document.getElementById(id);
+function msg(id,t,ok){const e=$(id);e.textContent=t;e.className="msg "+(ok?"ok":"err")}
+async function auth(path,e,p,m){
+ const b=$(m).previousElementSibling;b.disabled=true;b.textContent="CONNECTING…";msg(m,"Connecting to Satoshi Hunt API…");
+ try{const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify({email:$(e).value.trim(),password:$(p).value})});let d={};try{d=await r.json()}catch(_){}
+ if(!r.ok)throw Error(d.detail||"Authentication failed");if(!d.session)throw Error("API returned no session");
+ TOKEN=d.session;localStorage.setItem("satoshi_hunt_session",TOKEN);await loadMe();
+ }catch(x){msg(m,x.message||"Unable to connect")}finally{b.disabled=false;b.textContent=path.endsWith("/register")?"CREATE ACCOUNT":"LOG IN"}
+}
+async function loadMe(){
+ if(!TOKEN){$("state").textContent="Sign in to manage your profile.";return}
+ try{const r=await fetch(API+"/me",{headers:{Authorization:"Bearer "+TOKEN}});let d={};try{d=await r.json()}catch(_){}
+ if(r.status===401){TOKEN="";localStorage.removeItem("satoshi_hunt_session");$("state").textContent="Your session expired. Please log in again.";return}
+ if(!r.ok)throw Error(d.detail||"Unable to load account");
+ $("auth").classList.add("hidden");$("profile").classList.remove("hidden");$("state").textContent="Your saved account settings";$("who").textContent=d.email||"Your account";$("wallet").value=d.btc_payout_address||"";
+ await Promise.all([loadWorkers(),loadRewards()]);
+ }catch(e){$("state").textContent=e.message||"Account temporarily unavailable."}
+}
+async function loadWorkers(){
+ const a=$("workerArea");try{const r=await fetch(API+"/workers",{headers:{Authorization:"Bearer "+TOKEN}});const d=await r.json();if(!r.ok)throw Error(d.detail||"Worker unavailable");WORKERS=d;const active=d.filter(x=>x.status==="ACTIVE");
+ if(active.length)a.innerHTML="<b>"+active.length+" active worker(s)</b><div style='margin-top:6px'>Your worker is ready for eligible puzzle assignments.</div>";
+ else a.innerHTML="<div>No active worker yet.</div><button class='btn primary' onclick='createWorker()'>CREATE WORKER</button>";
+ }catch(e){a.textContent="Worker status unavailable right now."}
+}
+async function createWorker(){
+ try{const r=await fetch(API+"/workers",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN,"Idempotency-Key":"worker-"+crypto.randomUUID()},body:JSON.stringify({label:"Satoshi Hunt Worker"})});const d=await r.json();if(!r.ok)throw Error(d.detail||"Unable to create worker");WORKERS=[...WORKERS,d];$("workerArea").innerHTML="<b>WORKER CREATED</b><div style='margin-top:6px'>Worker <b>"+d.label+"</b> is active.</div><input style='margin-top:10px' value='"+String(d.worker_token).replace(/&/g,"&amp;").replace(/"/g,"&quot;")+"' readonly onclick='this.select()'><div class='muted'>Save this one-time token securely if you connect an external worker.</div>";
+ }catch(e){$("workerArea").textContent=e.message}
+}
+async function loadRewards(){
+ const a=$("rewardArea");try{const r=await fetch(API+"/account/rewards",{headers:{Authorization:"Bearer "+TOKEN},cache:"no-store"});const d=await r.json();if(!r.ok)throw Error(d.detail||"Unable to load rewards");let h="<div class='balance'>"+Number(d.available_btc||0).toFixed(8)+" BTC</div><div class='muted'>available reward balance</div>";const rows=d.withdrawals||[];if(rows.length)h+="<div style='margin-top:14px'><b>RECENT WITHDRAWALS</b></div>"+rows.slice(0,5).map(x=>"<div class='muted' style='margin-top:7px'>"+Number(x.amount_btc||0).toFixed(8)+" BTC · <span class='tag'>"+String(x.status||"").replace(/[<>]/g,"")+"</span></div>").join("");a.innerHTML=h}catch(e){a.innerHTML="<div class='muted'>"+(e.message||"Reward data unavailable.")+"</div>"}
+}
+async function saveWallet(){
+ try{const r=await fetch(API+"/account/payout-address",{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN,"Idempotency-Key":"wallet-"+crypto.randomUUID()},body:JSON.stringify({btc_payout_address:$("wallet").value.trim()})});const d=await r.json();if(!r.ok)throw Error(d.detail||"Wallet update failed");msg("wm","BTC payout address saved and validated. It will remain saved until you change it.",true)}catch(e){msg("wm",e.message||"Wallet update failed")}
+}
+function logout(){TOKEN="";WORKERS=[];localStorage.removeItem("satoshi_hunt_session");location.href="index.html#account"}
+loadMe();
+</script>
+</body></html>
