@@ -37,7 +37,7 @@ if FRONTEND_ORIGIN:
         CORSMiddleware,
         allow_origins=[FRONTEND_ORIGIN],
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     )
 
@@ -233,8 +233,12 @@ def checkpoint(assignment_id: UUID, body: CheckpointCreate, request: Request, wo
     enforce_rate_limit(request, "write")
     if body.cursor_next > body.cursor_end or body.cursor_end <= body.cursor_start:
         raise HTTPException(400, "Invalid checkpoint cursor")
+    payload=body.model_dump()
     with db() as conn:
         with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, worker_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute(
                 "select a.job_id,a.worker_id,a.status from job_assignments a where a.id=%s and a.worker_id=%s for update",
                 (assignment_id,worker_id),
@@ -251,14 +255,20 @@ def checkpoint(assignment_id: UUID, body: CheckpointCreate, request: Request, wo
                 "insert into work_proofs(id,assignment_id,worker_id,proof_type,proof_hash,nonce) values(%s,%s,%s,'CHECKPOINT',%s,%s) on conflict do nothing",
                 (uuid4(),assignment_id,worker_id,digest,body.nonce),
             )
-    return {"checkpoint_hash":digest,"cursor_next":body.cursor_next}
+            response={"checkpoint_hash":digest,"cursor_next":body.cursor_next}
+            worker_idempotency_store(cur, worker_id, request, payload, response)
+            return response
 
 
 @app.post("/assignments/{assignment_id}/resume")
 def resume_assignment(assignment_id: UUID, request: Request, worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id)}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, worker_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute(
                 "select job_id,status from job_assignments where id=%s and worker_id=%s",
                 (assignment_id,worker_id),
@@ -267,7 +277,11 @@ def resume_assignment(assignment_id: UUID, request: Request, worker_id: UUID = D
             if not row: raise HTTPException(404,"Assignment not found")
             cur.execute("select cursor_next from job_checkpoints where assignment_id=%s order by created_at desc limit 1",(assignment_id,))
             cp=cur.fetchone()
-    return {"assignment_id":str(assignment_id),"status":row[1],"resume_cursor":cp[0] if cp else None}
+    response={"assignment_id":str(assignment_id),"status":row[1],"resume_cursor":cp[0] if cp else None}
+    with db() as conn:
+        with conn.cursor() as cur:
+            worker_idempotency_store(cur, worker_id, request, payload, response)
+    return response
 
 
 @app.get("/audit/explorer")
@@ -980,6 +994,7 @@ def assignment_for_account(cur, assignment_id: UUID, account_id: UUID):
 @app.post("/assignments/{assignment_id}/start")
 def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id)}
     now = datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
@@ -992,12 +1007,17 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
                 raise HTTPException(409, "Assignment changed before start")
             cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'",(row[1],))
             record_audit_event(cur,"STARTED","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
-    return {"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
+    response={"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
+    with db() as conn:
+        with conn.cursor() as cur:
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
+    return response
 
 
 @app.post("/assignments/{assignment_id}/heartbeat")
 def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id)}
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
@@ -1008,12 +1028,17 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id:
             cur.execute("update job_assignments set last_heartbeat_at=%s where id=%s",(now,assignment_id))
             cur.execute("update workers set last_seen_at=%s where id=%s",(now,row[2]))
             record_audit_event(cur,"HEARTBEAT","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
-    return {"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
+    response={"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
+    with db() as conn:
+        with conn.cursor() as cur:
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
+    return response
 
 
 @app.post("/assignments/{assignment_id}/complete")
 def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id)}
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
@@ -1033,12 +1058,17 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
             cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
             cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
             record_audit_event(cur,"COMPLETED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"contribution_seconds":seconds})
-    return {"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
+    response={"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
+    with db() as conn:
+        with conn.cursor() as cur:
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
+    return response
 
 
 @app.post("/jobs/{job_id}/claims")
 def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
+    payload=body.model_dump()
     with db() as conn:
         with conn.cursor() as cur:
             expire_stale_assignments(cur)
@@ -1063,7 +1093,9 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                 return {"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
             record_audit_event(cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,payload={"assignment_id":str(body.assignment_id),"candidate_hash":body.candidate_hash,"result_status":body.result_status})
             # Verification is intentionally performed only by a trusted adapter pipeline.
-    return {"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id)}
+    response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id)}
+    worker_idempotency_store(cur, token_worker_id, request, payload, response)
+    return response
 
 
 @app.get("/audit/job/{job_id}")
