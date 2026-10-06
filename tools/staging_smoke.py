@@ -17,6 +17,8 @@ def main():
             "source_id":"STAGING-HASH-001",
             "fingerprint":"staging",
             "expected_candidate_hash":"abc123",
+            "funding_match":True,
+            "verification_stale":False,
         },
     }
     verification = verify_candidate_hash(record,"abc123")
@@ -55,6 +57,8 @@ def main():
             "source_id":"peter-todd-hash-collision-bounties",
             "checked_at":"2026-10-06",
             "fingerprint":"four-live-escrows-public-record",
+            "funding_match":True,
+            "verification_stale":False,
         },
     }
     real = PeterToddHashCollisionAdapter.verify(real_record,"sha256:00:01")
