@@ -135,6 +135,81 @@ def account_id_from_auth(authorization: str = Header(default="")) -> UUID:
         raise HTTPException(401, "Invalid or expired session")
 
 
+PASSWORD_ITERATIONS = max(210000, int(os.environ.get("PASSWORD_PBKDF2_ITERATIONS", "310000")))
+BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+BECH32M_CONST = 0x2bc830a3
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS)
+    return "pbkdf2_sha256$" + str(PASSWORD_ITERATIONS) + "$" + salt.hex() + "$" + digest.hex()
+
+def verify_password(password: str, encoded: str) -> bool:
+    try:
+        scheme, iterations, salt_hex, digest_hex = encoded.split("$", 3)
+        if scheme != "pbkdf2_sha256": return False
+        iterations = int(iterations)
+        if iterations < 210000 or iterations > 2000000: return False
+        expected = bytes.fromhex(digest_hex)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), iterations)
+        return secrets.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+def _base58check_valid(address: str) -> bool:
+    if not address or any(c not in BASE58_ALPHABET for c in address): return False
+    n = 0
+    for c in address: n = n * 58 + BASE58_ALPHABET.index(c)
+    raw = n.to_bytes((n.bit_length() + 7) // 8, "big") if n else b""
+    leading = len(address) - len(address.lstrip("1"))
+    raw = b"\x00" * leading + raw
+    return len(raw) == 25 and raw[0] in (0, 5) and hashlib.sha256(hashlib.sha256(raw[:-4]).digest()).digest()[:4] == raw[-4:]
+
+def _bech32_polymod(values):
+    generator = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+    chk = 1
+    for value in values:
+        top = chk >> 25
+        chk = ((chk & 0x1ffffff) << 5) ^ value
+        for i in range(5):
+            if (top >> i) & 1: chk ^= generator[i]
+    return chk
+
+def _bech32_hrp_expand(hrp): return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
+
+def _convertbits(data, frombits, tobits, pad=False):
+    acc = 0; bits = 0; ret = []; maxv = (1 << tobits) - 1; max_acc = (1 << (frombits + tobits - 1)) - 1
+    for value in data:
+        if value < 0 or value >> frombits: return None
+        acc = ((acc << frombits) | value) & max_acc; bits += frombits
+        while bits >= tobits:
+            bits -= tobits; ret.append((acc >> bits) & maxv)
+    if pad:
+        if bits: ret.append((acc << (tobits - bits)) & maxv)
+    elif bits >= frombits or ((acc << (tobits - bits)) & maxv): return None
+    return ret
+
+def _bech32_valid(address: str) -> bool:
+    if not address or (address.lower() != address and address.upper() != address): return False
+    address = address.lower()
+    if not address.startswith("bc1") or len(address) > 90: return False
+    pos = address.rfind("1")
+    if pos < 1 or pos + 7 > len(address): return False
+    try: data = [BECH32_CHARSET.index(c) for c in address[pos + 1:]]
+    except ValueError: return False
+    polymod = _bech32_polymod(_bech32_hrp_expand(address[:pos]) + data)
+    spec = 1 if polymod == 1 else BECH32M_CONST if polymod == BECH32M_CONST else None
+    if spec is None or not data: return False
+    version = data[0]; decoded = _convertbits(data[1:-6], 5, 8, False)
+    if version > 16 or decoded is None or not 2 <= len(decoded) <= 40: return False
+    if version == 0: return spec == 1 and len(decoded) in (20, 32)
+    return spec == BECH32M_CONST
+
+def valid_btc_mainnet_address(address: str) -> bool:
+    value = address.strip()
+    return _base58check_valid(value) or _bech32_valid(value)
+
 class LinkRequest(BaseModel):
     email: EmailStr
 
@@ -142,6 +217,16 @@ class LinkRequest(BaseModel):
 class VerifyRequest(BaseModel):
     email: EmailStr
     token: str = Field(min_length=16, max_length=256)
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=128)
 
 
 class WorkerCreate(BaseModel):
@@ -649,6 +734,39 @@ def ready():
             redis_ok = False
     return {"ready": True, "database": True, "redis": redis_ok, "rate_limit_mode": "redis" if _redis and redis_ok else "fallback"}
 
+
+
+@app.post("/auth/register")
+def register_account(body: RegisterRequest, request: Request):
+    enforce_rate_limit(request, "auth_request")
+    email = body.email.lower().strip()
+    password_hash = hash_password(body.password)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,password_hash from accounts where email=%s for update", (email,))
+            row = cur.fetchone()
+            if row:
+                if row[1]:
+                    raise HTTPException(409, "Account already exists")
+                cur.execute("update accounts set password_hash=%s where id=%s", (password_hash, row[0]))
+                account_id = row[0]
+            else:
+                account_id = uuid4()
+                cur.execute("insert into accounts(id,email,password_hash) values(%s,%s,%s)", (account_id,email,password_hash))
+    return {"session": issue_session(account_id), "expires_in": SESSION_TTL}
+
+
+@app.post("/auth/login")
+def login_account(body: LoginRequest, request: Request):
+    enforce_rate_limit(request, "auth_verify")
+    email = body.email.lower().strip()
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,password_hash from accounts where email=%s", (email,))
+            row = cur.fetchone()
+    if not row or not row[1] or not verify_password(body.password, row[1]):
+        raise HTTPException(401, "Invalid email or password")
+    return {"session": issue_session(row[0]), "expires_in": SESSION_TTL}
 
 
 @app.post("/auth/request-link")
@@ -1768,11 +1886,14 @@ def update_payout_address(body: PayoutAddressUpdate, request: Request, account_i
             replay=idempotency_replay(cur, account_id, request, payload)
             if replay is not None:
                 return replay
-            cur.execute("update accounts set btc_payout_address=%s where id=%s", (body.btc_payout_address.strip(), account_id))
+            address = body.btc_payout_address.strip()
+            if not valid_btc_mainnet_address(address):
+                raise HTTPException(422, "Invalid Bitcoin mainnet payout address")
+            cur.execute("update accounts set btc_payout_address=%s where id=%s", (address, account_id))
             if cur.rowcount != 1:
                 raise HTTPException(404, "Account not found")
             record_audit_event(cur,"PAYOUT_ADDRESS_UPDATED","account",account_id,account_id,payload={"address_present":True})
-            response={"ok":True,"payout_address_set":True}
+            response={"ok":True,"payout_address_set":True,"address_type":"validated_mainnet_btc"}
             idempotency_store(cur, account_id, request, payload, response)
             return response
 
