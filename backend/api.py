@@ -836,10 +836,21 @@ def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingest
             else:
                 job_id=uuid4()
                 cur.execute(
-                    "insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED')",
+                    "insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED') "
+                    "on conflict (puzzle_id,scope) do nothing returning id",
                     (job_id,body.id),
                 )
-                record_audit_event(cur,"CHALLENGE_INGESTED","challenge",body.id,payload={"job_id":str(job_id),"verification_fingerprint":body.verification.get("fingerprint")})
+                inserted = cur.fetchone()
+                if inserted:
+                    job_id = inserted[0]
+                    record_audit_event(cur,"CHALLENGE_INGESTED","challenge",body.id,payload={"job_id":str(job_id),"verification_fingerprint":body.verification.get("fingerprint")})
+                else:
+                    cur.execute(
+                        "select id from jobs where puzzle_id=%s and scope='public-reward-challenge' "
+                        "for update",
+                        (body.id,),
+                    )
+                    job_id = cur.fetchone()[0]
     return {"challenge_id":body.id,"job_id":str(job_id),"status":"QUEUED"}
 
 
