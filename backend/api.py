@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from verifier import verify_candidate_hash
 from settlement import build_reward_event
-from protocol_v1 import proof_hash, capability_score, adaptive_ranges, reliability_score
+from protocol_v1 import proof_hash, capability_score, adaptive_ranges, reliability_score, economic_priority
 from anti_cheat import security_flags
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -1221,6 +1221,48 @@ def verify_job_audit(job_id: UUID):
             valid_events += 1
         previous=e[7]
     return {"valid":True,"events_checked":valid_events,"head_hash":previous}
+
+@app.get("/scheduler/recommendations")
+def scheduler_recommendations(limit: int = 10):
+    limit = max(1, min(limit, 50))
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select j.id,j.puzzle_id,c.title,c.reward_btc,c.balance_btc,c.status,"
+                "coalesce(o.estimated_seconds,0),coalesce(o.estimated_difficulty,0) "
+                "from jobs j join challenge_registry c on c.id=j.puzzle_id "
+                "left join lateral (select estimated_seconds,estimated_difficulty from challenge_offers "
+                "where challenge_id=c.id and status='PUBLISHED' order by published_at desc nulls last,created_at desc limit 1) o on true "
+                "where j.scope='public-reward-challenge' and j.status='QUEUED' and c.status='OPEN + FUNDED' and c.balance_btc > 0 "
+                "order by c.balance_btc desc limit %s", (limit * 3,))
+            rows = cur.fetchall()
+            recommendations = []
+            for job_id,puzzle_id,title,reward,balance,status,estimated_seconds,difficulty in rows:
+                seconds = int(estimated_seconds or 0)
+                if seconds <= 0:
+                    seconds = max(3600, int(float(difficulty or 1) * 3600))
+                score = economic_priority(float(balance), seconds, 0.01, 1.0)
+                reason = {
+                    "expected_success_probability": 0.01,
+                    "estimated_worker_seconds": seconds,
+                    "funded_balance_btc": float(balance),
+                    "policy": "expected_reward_per_worker_hour"
+                }
+                cur.execute(
+                    "insert into scheduler_decisions(id,job_id,score,reason) values(%s,%s,%s,%s::jsonb)",
+                    (uuid4(), job_id, score, json.dumps(reason))
+                )
+                recommendations.append({
+                    "job_id": str(job_id),
+                    "puzzle_id": puzzle_id,
+                    "title": title,
+                    "funded_balance_btc": float(balance),
+                    "estimated_worker_seconds": seconds,
+                    "priority_score": score,
+                    "reason": reason
+                })
+            recommendations.sort(key=lambda x: x["priority_score"], reverse=True)
+            return {"recommendations": recommendations[:limit]}
 
 @app.get("/network/economics")
 def network_economics():
