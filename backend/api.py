@@ -37,10 +37,14 @@ _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIM
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.0")
 
-if FRONTEND_ORIGIN:
+ALLOWED_FRONTEND_ORIGINS = list(dict.fromkeys(
+    origin for origin in (FRONTEND_ORIGIN, "https://arslancyan.github.io") if origin
+))
+
+if ALLOWED_FRONTEND_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[FRONTEND_ORIGIN],
+        allow_origins=ALLOWED_FRONTEND_ORIGINS,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
