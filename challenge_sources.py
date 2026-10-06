@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+AUTHORITATIVE_ESCROW_SPEND_SLUGS = set(filter(None, os.getenv("AUTHORITATIVE_ESCROW_SPEND_SLUGS", "peter-todd-hash-collision-bounties-0-59btc").split(",")))
+
 SOURCE_URL = os.getenv(
     "PUBLIC_CHALLENGE_SOURCE_URL",
     "https://raw.githubusercontent.com/floflo777/open-crypto-puzzles/main/puzzles.json",
@@ -224,7 +226,7 @@ class OpenCryptoPuzzlesAdapter:
         out = []
 
         for puzzle in rows:
-            if puzzle.get("status") != "open" or _is_custodial(puzzle):
+            if puzzle.get("status") not in ("open", "watch") or _is_custodial(puzzle):
                 continue
 
             addresses = _escrows(puzzle)
@@ -318,6 +320,7 @@ class OpenCryptoPuzzlesAdapter:
                 "addresses": live_addresses,
                 "dual_explorer_match": True,
                 "solve_evidence_policy": "exact-escrow-utxo-spend-required",
+                "escrow_spend_is_authoritative": puzzle.get("slug") in AUTHORITATIVE_ESCROW_SPEND_SLUGS,
             }
             payout = {
                 "mode": "DIRECT_PUBLIC_ESCROW",
