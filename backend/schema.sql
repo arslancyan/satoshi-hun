@@ -1,5 +1,5 @@
--- Satoshi Hunt backend foundation (non-custodial)
--- Stores attribution/accounting metadata only. Never store private keys or seed phrases.
+-- Satoshi Hunt backend foundation.
+-- Treasury is custodial for BTC settlement accounting; never store private keys or seed phrases.
 
 create table if not exists auth_links (
   email text primary key,
@@ -185,8 +185,8 @@ create index if not exists idx_idempotency_records_created_at on idempotency_rec
 -- Checkpoint history remains append-only; the API enforces monotonic cursor advancement.
 
  
--- Non-custodial reward ledger. Balances are accounting claims only; Satoshi Hunt
--- never stores private keys or signs/broadcasts Bitcoin transactions.
+-- Reward ledger. Account balances are internal BTC liabilities backed by the central Treasury.
+-- Private keys/signers are never stored in the application database.
 create table if not exists reward_balances (
   account_id uuid primary key references accounts(id) on delete cascade,
   available_btc numeric(20,8) not null default 0 check (available_btc >= 0),
