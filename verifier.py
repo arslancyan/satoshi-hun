@@ -66,11 +66,18 @@ def classify(record):
 
 
 def eligible(record):
+    """Return True only when the public challenge has complete solver metadata."""
+    provenance = record.get("provenance")
+    verification = record.get("verification")
+    required_provenance = ("url", "source_id", "checked_at")
+    required_verification = ("method", "source_id", "checked_at", "fingerprint")
     return (
         classify(record) == "OPEN + FUNDED"
         and record.get("rules") == "public-reward-challenge"
-        and bool(record.get("provenance"))
-        and bool(record.get("verification"))
+        and isinstance(provenance, dict)
+        and all(str(provenance.get(key, "")).strip() for key in required_provenance)
+        and isinstance(verification, dict)
+        and all(str(verification.get(key, "")).strip() for key in required_verification)
     )
 
 
