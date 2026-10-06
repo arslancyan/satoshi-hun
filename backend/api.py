@@ -18,7 +18,7 @@ from pydantic import BaseModel, EmailStr, Field
 from verifier import verify_candidate_hash
 from settlement import build_reward_event
 from protocol_v1 import proof_hash, capability_score, adaptive_ranges, reliability_score, economic_priority
-from anti_cheat import security_flags
+from anti_cheat import security_flags, reputation_score
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -495,11 +495,8 @@ def schedule_job(job_id: UUID, request: Request, account_id: UUID = Depends(acco
             job=cur.fetchone()
             if not job: raise HTTPException(409,"Job is not schedulable")
             cur.execute("""
-                select w.id,w.last_seen_at,coalesce(rc.score,50),coalesce(wc.cpu_threads,1),coalesce(wc.adapter_types,'[]'::jsonb)
+                select w.id,w.last_seen_at,coalesce(wc.cpu_threads,1),coalesce(wc.adapter_types,'[]'::jsonb)
                 from workers w
-                left join (
-                  select worker_id,avg(weight) score from reputation_events group by worker_id
-                ) rc on rc.worker_id=w.id
                 left join worker_capabilities wc on wc.worker_id=w.id
                 where w.status='ACTIVE'
                 order by (w.last_seen_at is null),w.last_seen_at desc
@@ -508,10 +505,43 @@ def schedule_job(job_id: UUID, request: Request, account_id: UUID = Depends(acco
             candidates=cur.fetchall()
             if not candidates: raise HTTPException(409,"No active workers available")
             ranked=[]
-            for wid,last_seen,rep,threads,adapters in candidates:
+            for wid,last_seen,threads,adapters in candidates:
+                cur.execute(
+                    "select "
+                    "count(*) filter (where result_status in ('TESTED','VERIFIED','REJECTED')), "
+                    "count(*) filter (where result_status='VERIFIED'), "
+                    "count(*) filter (where result_status='REJECTED') "
+                    "from work_claims where worker_id=%s and finished_at > now() - interval '30 days'",
+                    (wid,),
+                )
+                claim_count,verified_count,rejected_count=cur.fetchone()
+                cur.execute(
+                    "select count(*) filter (where status='COMPLETED'), "
+                    "count(*) filter (where status='EXPIRED'), "
+                    "coalesce(sum(verified_seconds),0) "
+                    "from job_assignments where worker_id=%s and assigned_at > now() - interval '30 days'",
+                    (wid,),
+                )
+                completed_count,stale_count,total_seconds=cur.fetchone()
+                cur.execute(
+                    "select count(*) from security_events "
+                    "where worker_id=%s and event_type='DUPLICATE_CLAIM' "
+                    "and created_at > now() - interval '30 days'",
+                    (wid,),
+                )
+                duplicate_count=cur.fetchone()[0]
+                rep=reputation_score(
+                    claim_count,verified_count,rejected_count+duplicate_count,stale_count,
+                    completed_count,total_seconds,
+                )
                 score=capability_score({"id":wid,"cpu_threads":threads,"adapter_types":adapters or []},{"adapter_types":[job[3]]})
                 if score>0:
-                    ranked.append({"id":wid,"score":score*(float(rep)/100.0)})
+                    ranked.append({
+                        "id":wid,
+                        "score":score*(float(rep)/100.0),
+                        "reputation":rep,
+                        "security_flags":security_flags(claim_count,duplicate_count,rejected_count,stale_count),
+                    })
             if not ranked: raise HTTPException(409,"No compatible workers available")
             ranked.sort(key=lambda x:(x["score"],str(x["id"])),reverse=True)
             selected=ranked[0]
@@ -519,7 +549,7 @@ def schedule_job(job_id: UUID, request: Request, account_id: UUID = Depends(acco
                 "insert into scheduler_decisions(id,job_id,worker_id,score,reason) values(%s,%s,%s,%s,%s::jsonb)",
                 (uuid4(),job_id,selected["id"],selected["score"],json.dumps({"strategy":"capability+reputation"})),
             )
-            record_audit_event(cur,"SCHEDULER_DECISION","job",job_id,account_id,selected["id"],payload={"score":selected["score"]})
+            record_audit_event(cur,"SCHEDULER_DECISION","job",job_id,account_id,selected["id"],payload={"score":selected["score"],"reputation":selected["reputation"],"security_flags":selected["security_flags"]})
             response={"job_id":str(job_id),"selected_worker_id":str(selected["id"]),"score":selected["score"]}
             idempotency_store(cur, account_id, request, payload, response)
             return response
@@ -1252,6 +1282,11 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                 duplicate=True
 
             if duplicate:
+                cur.execute(
+                    "insert into security_events(id,worker_id,event_type,severity,metadata) "
+                    "values(%s,%s,'DUPLICATE_CLAIM','WARN',%s::jsonb)",
+                    (uuid4(),token_worker_id,json.dumps({"job_id":str(job_id),"candidate_hash":body.candidate_hash})),
+                )
                 response={"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
                 worker_idempotency_store(cur, token_worker_id, request, payload, response)
                 return response
