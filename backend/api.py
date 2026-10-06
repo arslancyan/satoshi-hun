@@ -6,6 +6,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import jwt
