@@ -2013,7 +2013,7 @@ def _scriptpubkey_for_mainnet_address(address: str) -> bytes:
         raw=n.to_bytes((n.bit_length()+7)//8,"big") if n else b""
         leading=len(value)-len(value.lstrip("1")); raw=b"\\x00"*leading+raw
         payload=raw[:-4]; version=payload[0]; h=payload[1:]
-        if version == 0 and len(h) in (20,32): return bytes([0,len(h)])+h
+        if version == 0 and len(h) == 20: return b"\\x76\\xa9\\x14"+h+b"\\x88\\xac"
         if version == 5 and len(h) == 20: return b"\\xa9\\x14"+h+b"\\x87"
         raise HTTPException(422,"Unsupported payout address type")
     a=value.lower(); pos=a.rfind("1")
