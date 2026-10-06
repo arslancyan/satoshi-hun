@@ -1003,6 +1003,9 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
     now = datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
             expire_stale_assignments(cur)
             row=assignment_for_worker(cur,assignment_id,token_worker_id)
             if not row: raise HTTPException(404,"Assignment not found")
@@ -1012,7 +1015,7 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
                 raise HTTPException(409, "Assignment changed before start")
             cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'",(row[1],))
             record_audit_event(cur,"STARTED","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
-            response=response={"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
+            response={"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
 
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
     return response
@@ -1030,6 +1033,9 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id:
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
             expire_stale_assignments(cur)
             row=assignment_for_worker(cur,assignment_id,token_worker_id)
             if not row: raise HTTPException(404,"Assignment not found")
@@ -1037,7 +1043,7 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id:
             cur.execute("update job_assignments set last_heartbeat_at=%s where id=%s",(now,assignment_id))
             cur.execute("update workers set last_seen_at=%s where id=%s",(now,row[2]))
             record_audit_event(cur,"HEARTBEAT","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
-            response=response={"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
+            response={"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
 
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
     return response
@@ -1055,6 +1061,9 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
             expire_stale_assignments(cur)
             row=assignment_for_worker(cur,assignment_id,token_worker_id)
             if not row: raise HTTPException(404,"Assignment not found")
@@ -1071,7 +1080,7 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
             cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
             cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
             record_audit_event(cur,"COMPLETED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"contribution_seconds":seconds})
-            response=response={"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
+            response={"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
 
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
     return response
