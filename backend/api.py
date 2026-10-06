@@ -181,6 +181,48 @@ def worker_id_from_token(authorization: str = Header(default="")) -> UUID:
 
 
 
+def worker_idempotency_fingerprint(request: Request, worker_id: UUID, payload) -> str:
+    canonical = json.dumps(
+        {"worker_id": str(worker_id), "method": request.method, "path": request.url.path, "payload": payload},
+        sort_keys=True, separators=(",", ":"), default=str
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def worker_idempotency_replay(cur, worker_id: UUID, request: Request, payload):
+    key = idempotency_key(request)
+    if not key:
+        return None
+    fingerprint = worker_idempotency_fingerprint(request, worker_id, payload)
+    cur.execute(
+        "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+        (f"satoshi-hunt:worker-idempotency:{worker_id}:{key}",),
+    )
+    cur.execute(
+        "select request_hash,response_json from worker_idempotency_records "
+        "where worker_id=%s and idempotency_key=%s",
+        (worker_id, key),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    if row[0] != fingerprint:
+        raise HTTPException(409, "Idempotency-Key was already used with a different request")
+    return row[1]
+
+
+def worker_idempotency_store(cur, worker_id: UUID, request: Request, payload, response):
+    key = idempotency_key(request)
+    if not key:
+        return
+    fingerprint = worker_idempotency_fingerprint(request, worker_id, payload)
+    cur.execute(
+        "insert into worker_idempotency_records(worker_id,idempotency_key,request_hash,response_json) "
+        "values(%s,%s,%s,%s::jsonb) on conflict(worker_id,idempotency_key) do nothing",
+        (worker_id, key, fingerprint, json.dumps(response, default=str)),
+    )
+
+
 class CapabilityUpdate(BaseModel):
     cpu_threads: int = Field(default=1, ge=1, le=1024)
     memory_mb: int = Field(default=512, ge=1)
