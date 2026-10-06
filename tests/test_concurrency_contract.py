@@ -40,3 +40,10 @@ def test_resume_requires_active_assignment():
     section=API[API.index('@app.post("/assignments/{assignment_id}/resume")'):API.index('@app.get("/audit/explorer")')]
     assert 'row[1] not in ("ASSIGNED","RUNNING")' in section
     assert "Assignment is no longer resumable" in section
+
+
+def test_completion_splits_worker_hours_across_utc_days():
+    section=API[API.index('@app.post("/assignments/{assignment_id}/complete")'):API.index('@app.post("/jobs/{job_id}/claims")')]
+    assert "period_start=started_at.date()" in section
+    assert "while period_start <= end_date:" in section
+    assert "seconds_verified" in section
