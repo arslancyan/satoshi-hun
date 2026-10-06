@@ -48,10 +48,10 @@ ALLOWED_FRONTEND_ORIGINS = list(dict.fromkeys(
 if ALLOWED_FRONTEND_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=ALLOWED_FRONTEND_ORIGINS,
+        allow_origins=["*"],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+        allow_headers=["*"],
     )
 
 @app.middleware("http")
