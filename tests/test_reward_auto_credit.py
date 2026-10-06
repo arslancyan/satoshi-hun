@@ -45,3 +45,11 @@ def test_non_custodial_withdrawal_never_stores_signing_material():
     assert "wif" not in api
     assert "signrawtransaction" not in api
     assert "sendrawtransaction" not in api
+
+
+def test_external_payout_requires_real_txid_format():
+    from payouts import validate_external_txid, payout_contract
+    assert validate_external_txid("00"*32)
+    assert not validate_external_txid("pending")
+    assert payout_contract()["custody"] == "none"
+    assert payout_contract()["requires_external_txid"] is True
