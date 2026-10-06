@@ -23,3 +23,11 @@ def test_idempotency_fingerprint_binds_method_and_path():
     a = fingerprint("POST", "/workers", {"label": "cpu"})
     b = fingerprint("PUT", "/workers/123/capabilities", {"label": "cpu"})
     assert a != b
+
+
+def test_idempotency_key_reuse_requires_same_request_fingerprint():
+    first = fingerprint("POST", "/creator/offers", {"challenge_id": "135", "estimated_seconds": 10})
+    same = fingerprint("POST", "/creator/offers", {"estimated_seconds": 10, "challenge_id": "135"})
+    changed = fingerprint("POST", "/creator/offers", {"challenge_id": "135", "estimated_seconds": 11})
+    assert first == same
+    assert first != changed
