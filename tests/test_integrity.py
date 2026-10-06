@@ -31,3 +31,16 @@ def test_verifier_requires_provenance_and_verification():
     base["provenance"] = {"url": "https://example.com", "checked_at": "2026-01-01T00:00:00Z"}
     base["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc"}
     assert verifier_eligible(base) is True
+
+
+def test_protocol_requires_provenance_and_verification():
+    record = {
+        "status": "OPEN + FUNDED",
+        "balance_btc": 1,
+        "reward_btc": 1,
+        "rules": "public-reward-challenge",
+    }
+    assert protocol_eligible(record) is False
+    record["provenance"] = {"url": "https://example.com", "checked_at": "2026-01-01T00:00:00Z"}
+    record["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc"}
+    assert protocol_eligible(record) is True
