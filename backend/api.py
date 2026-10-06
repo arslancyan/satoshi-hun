@@ -380,7 +380,7 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
             cur.execute(
                 "select a.id,a.worker_id,a.status,j.status from job_assignments a "
                 "join jobs j on j.id=a.job_id join workers w on w.id=a.worker_id "
-                "where a.id=%s and a.job_id=%s and w.account_id=%s for update",
+                "where a.id=%s and a.job_id=%s and w.id=%s for update",
                 (body.assignment_id, job_id, token_worker_id),
             )
             assignment = cur.fetchone()
