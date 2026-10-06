@@ -331,6 +331,12 @@ def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingest
         raise HTTPException(400, "Only OPEN + FUNDED challenges may enter the solver queue")
     if body.rules != "public-reward-challenge" or not body.provenance or not body.verification:
         raise HTTPException(400, "Challenge provenance and verification metadata are required")
+    required_provenance = ("url", "source_id", "checked_at")
+    required_verification = ("method", "source_id", "checked_at", "fingerprint")
+    if any(not body.provenance.get(key) for key in required_provenance):
+        raise HTTPException(400, "Complete provenance metadata is required")
+    if any(not body.verification.get(key) for key in required_verification):
+        raise HTTPException(400, "Complete verification metadata is required")
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
