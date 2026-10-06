@@ -1280,6 +1280,100 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
     return response
 
 
+def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash):
+    cur.execute(
+        "select j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification "
+        "from jobs j join challenge_registry c on c.id=j.puzzle_id "
+        "where j.id=%s and j.scope='public-reward-challenge' for update",
+        (job_id,),
+    )
+    job=cur.fetchone()
+    if not job:
+        return None
+    record={
+        "id":job[0],"type":job[2],"reward_btc":job[3],"balance_btc":job[4],
+        "status":job[5],"rules":job[6],"provenance":job[7],"verification":job[8],
+    }
+    result=verify_candidate_hash(record,candidate_hash)
+    if not result["verified"]:
+        cur.execute(
+            "update work_claims set result_status='REJECTED' where id=%s and result_status='TESTED'",
+            (claim_id,),
+        )
+        return {"verified":False,"reason":result["reason"]}
+    cur.execute(
+        "update work_claims set result_status='VERIFIED' where id=%s and result_status='TESTED'",
+        (claim_id,),
+    )
+    if cur.rowcount != 1:
+        return None
+    cur.execute(
+        "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",
+        (job_id,),
+    )
+    cur.execute("select account_id from workers where id=%s for update",(worker_id,))
+    account_row=cur.fetchone()
+    if not account_row:
+        raise HTTPException(404,"Worker account not found")
+    account_id=account_row[0]
+    event=build_reward_event(account_id,job[0],job[3])
+    if Decimal(str(event["worker_share_btc"])) + Decimal(str(event["platform_fee_btc"])) != Decimal(str(event["gross_reward_btc"])):
+        raise HTTPException(500,"Reward split integrity check failed")
+    reward_id=uuid4()
+    cur.execute(
+        "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id,approved_at) "
+        "values(%s,%s,%s,%s,%s,%s,'APPROVED',%s,now()) "
+        "on conflict (puzzle_id,account_id) where settlement_status <> 'VOID' do nothing returning id",
+        (reward_id,account_id,job[0],event["gross_reward_btc"],event["worker_share_btc"],event["platform_fee_btc"],claim_id),
+    )
+    inserted=cur.fetchone()
+    if not inserted:
+        return {"verified":True,"already_credited":True}
+    reward_id=inserted[0]
+    cur.execute(
+        "insert into reward_balances(account_id,available_btc,updated_at) values(%s,%s,now()) "
+        "on conflict(account_id) do update set available_btc=reward_balances.available_btc+excluded.available_btc,updated_at=now()",
+        (account_id,event["worker_share_btc"]),
+    )
+    cur.execute(
+        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc) values(%s,%s,%s,'WORKER_CREDIT',%s) "
+        "on conflict(reward_event_id,entry_type) do nothing",
+        (uuid4(),account_id,reward_id,event["worker_share_btc"]),
+    )
+    cur.execute(
+        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc) values(%s,%s,%s,'PLATFORM_FEE',%s) "
+        "on conflict(reward_event_id,entry_type) do nothing",
+        (uuid4(),account_id,reward_id,event["platform_fee_btc"]),
+    )
+    cur.execute("select btc_payout_address from accounts where id=%s for update",(account_id,))
+    payout=cur.fetchone()
+    withdrawal_queued=False
+    if payout and payout[0]:
+        cur.execute(
+            "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
+            "where account_id=%s and available_btc >= %s",
+            (event["worker_share_btc"],account_id,event["worker_share_btc"]),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(500,"Reward balance reservation failed")
+        cur.execute(
+            "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) values(%s,%s,%s,%s,'QUEUED')",
+            (uuid4(),account_id,event["worker_share_btc"],payout[0]),
+        )
+        withdrawal_queued=True
+    record_audit_event(
+        cur,"AUTO_REWARD_CREDITED","reward_event",reward_id,account_id,worker_id,
+        {"job_id":str(job_id),"claim_id":str(claim_id),"worker_share_btc":event["worker_share_btc"],
+         "platform_fee_btc":event["platform_fee_btc"],"withdrawal_queued":withdrawal_queued,"custody":"none"},
+    )
+    return {
+        "verified":True,"reward_id":str(reward_id),
+        "worker_credit_btc":event["worker_share_btc"],
+        "platform_fee_btc":event["platform_fee_btc"],
+        "withdrawal_queued":withdrawal_queued,
+    }
+
+
 @app.post("/jobs/{job_id}/claims")
 def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
@@ -1350,8 +1444,10 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                     "cpu_seconds":accepted_cpu_seconds,
                 },
             )
-            # Verification is intentionally performed only by a trusted adapter pipeline.
-            response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id),"cpu_seconds":accepted_cpu_seconds}
+            auto_result = auto_credit_verified_claim(cur, job_id, cid, token_worker_id, body.candidate_hash)
+            response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,
+                      "assignment_id":str(body.assignment_id),"cpu_seconds":accepted_cpu_seconds,
+                      "auto_verification":auto_result}
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
             return response
 
