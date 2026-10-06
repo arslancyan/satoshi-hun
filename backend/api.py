@@ -19,6 +19,7 @@ from verifier import verify_candidate_hash
 from settlement import build_reward_event
 from protocol_v1 import proof_hash, capability_score, adaptive_ranges, reliability_score, economic_priority
 from anti_cheat import security_flags, reputation_score
+from payouts import validate_external_txid
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -1723,6 +1724,8 @@ def start_withdrawal_processing(withdrawal_id: UUID, request: Request, account_i
 @app.post("/admin/withdrawals/{withdrawal_id}/complete")
 def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    if not validate_external_txid(body.external_reference):
+        raise HTTPException(422, "external_reference must be a 64-character Bitcoin transaction id")
     payload={"withdrawal_id":str(withdrawal_id),"external_reference":body.external_reference}
     with db() as conn:
         with conn.cursor() as cur:
