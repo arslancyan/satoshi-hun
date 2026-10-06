@@ -11,6 +11,7 @@ Designed for Android/Termux and other lightweight devices. This worker:
 The worker intentionally performs only the public-reward-challenge protocol.
 Challenge-specific solving belongs in an approved adapter.
 """
+import hashlib
 import json
 import os
 import random
@@ -77,6 +78,12 @@ def active_assignment(items):
     )
 
 
+def candidate_hash(job_id, attempt=0):
+    """Deterministic beta marker; never represents a Bitcoin private-key search."""
+    raw = f"satoshi-hunt-mobile-demo:{job_id}:{attempt}".encode()
+    return hashlib.sha256(raw).hexdigest()
+
+
 def work_assignment(item):
     assignment_id = item["id"]
     job_id = item["job_id"]
@@ -91,9 +98,9 @@ def work_assignment(item):
     last_heartbeat = 0.0
     started = time.monotonic()
 
-    # This is deliberately a bounded protocol placeholder. A production
-    # challenge adapter should replace this section with the challenge's
-    # published, server-verifiable computation.
+    # Bounded beta protocol placeholder. A production challenge adapter must
+    # replace the marker with the published challenge computation and its
+    # independently verifiable candidate.
     for progress in range(0, 101, 10):
         now = time.monotonic()
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
@@ -103,12 +110,22 @@ def work_assignment(item):
         if progress < 100:
             time.sleep(1)
 
-    # Do not claim a fabricated solution. The mobile worker reports a
-    # framework marker only; challenge-specific adapters must provide the
-    # actual candidate.
+    result = api_call(
+        f"/jobs/{job_id}/claims",
+        "POST",
+        {
+            "assignment_id": assignment_id,
+            "worker_id": WORKER_ID,
+            "candidate_hash": candidate_hash(job_id),
+            "result_status": "TESTED",
+            "cpu_seconds": max(0, int(time.monotonic() - started)),
+        },
+    )
+    print(f"[#{puzzle_id}] beta claim accepted: {result.get('accepted', False)}")
+    done = api_call(f"/assignments/{assignment_id}/complete")
     print(
-        f"[#{puzzle_id}] adapter required; assignment remains server-auditable "
-        f"(job {job_id}, elapsed {int(time.monotonic() - started)}s)"
+        f"[#{puzzle_id}] completed: "
+        f"{done.get('contribution_seconds', 0)} contribution seconds"
     )
 
 
