@@ -33,6 +33,10 @@ RATE_LIMIT_REDIS_URL = os.environ.get("RATE_LIMIT_REDIS_URL", "")
 MAX_ACTIVE_ASSIGNMENTS = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS", "100")))
 MAX_ACTIVE_ASSIGNMENTS_PER_JOB = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS_PER_JOB", "1")))
 MAX_NETWORK_WORKER_HOURS_PER_DAY = max(1, int(os.environ.get("MAX_NETWORK_WORKER_HOURS_PER_DAY", "10000")))
+PAYOUT_WORKER_TOKEN = os.environ.get("PAYOUT_WORKER_TOKEN", "").strip()
+MAX_SINGLE_PAYOUT_BTC = Decimal(os.environ.get("MAX_SINGLE_PAYOUT_BTC", "0.001"))
+MAX_DAILY_PAYOUT_BTC = Decimal(os.environ.get("MAX_DAILY_PAYOUT_BTC", "0.005"))
+PAYOUT_RETRY_AFTER_MINUTES = max(5, int(os.environ.get("PAYOUT_RETRY_AFTER_MINUTES", "15")))
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.1")
@@ -919,6 +923,14 @@ def require_owner(cur, account_id: UUID):
     row = cur.fetchone()
     if not row or row[0].lower() != OWNER_EMAIL:
         raise HTTPException(403, "Owner authorization required")
+
+
+def require_payout_worker(request: Request):
+    if not PAYOUT_WORKER_TOKEN:
+        raise HTTPException(503, "Payout worker is not configured")
+    supplied = request.headers.get("X-Payout-Worker-Token", "").strip()
+    if not supplied or not secrets.compare_digest(supplied, PAYOUT_WORKER_TOKEN):
+        raise HTTPException(401, "Payout worker authorization required")
 
 
 def idempotency_key(request: Request):
@@ -1854,6 +1866,73 @@ def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: 
                       "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
             idempotency_store(cur, account_id, request, payload, response)
             return response
+
+
+@app.post("/internal/payouts/next")
+def payout_worker_next(request: Request):
+    require_payout_worker(request)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select pg_advisory_xact_lock(58392017)")
+            cur.execute(
+                "select id,account_id,amount_btc,payout_address,status from withdrawal_requests "
+                "where status='QUEUED' or (status='PROCESSING' and processed_at is null and created_at < now() - (%s || ' minutes')::interval) "
+                "order by created_at asc limit 1 for update skip locked",
+                (PAYOUT_RETRY_AFTER_MINUTES,),
+            )
+            row=cur.fetchone()
+            if not row:
+                return {"withdrawal":None}
+            wid,account_id,amount,address,status=row
+            amount=Decimal(str(amount))
+            if amount > MAX_SINGLE_PAYOUT_BTC:
+                record_audit_event(cur,"WITHDRAWAL_BLOCKED","withdrawal",wid,account_id,
+                    payload={"reason":"MAX_SINGLE_PAYOUT_BTC","amount_btc":str(amount),"limit_btc":str(MAX_SINGLE_PAYOUT_BTC)})
+                cur.execute("update withdrawal_requests set status='FAILED',processed_at=now() where id=%s and status in ('QUEUED','PROCESSING')",(wid,))
+                return {"withdrawal":None,"blocked":"MAX_SINGLE_PAYOUT_BTC","withdrawal_id":str(wid)}
+            cur.execute(
+                "select coalesce(sum(amount_btc),0) from withdrawal_requests "
+                "where status='PAID' and processed_at >= current_date",
+            )
+            paid_today=Decimal(str(cur.fetchone()[0] or 0))
+            if paid_today + amount > MAX_DAILY_PAYOUT_BTC:
+                record_audit_event(cur,"WITHDRAWAL_BLOCKED","withdrawal",wid,account_id,
+                    payload={"reason":"MAX_DAILY_PAYOUT_BTC","amount_btc":str(amount),
+                             "paid_today_btc":str(paid_today),"limit_btc":str(MAX_DAILY_PAYOUT_BTC)})
+                return {"withdrawal":None,"blocked":"MAX_DAILY_PAYOUT_BTC","withdrawal_id":str(wid)}
+            cur.execute(
+                "update withdrawal_requests set status='PROCESSING' where id=%s and status in ('QUEUED','PROCESSING') returning id",
+                (wid,),
+            )
+            if cur.rowcount != 1:
+                return {"withdrawal":None}
+            record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",wid,account_id,
+                payload={"amount_btc":str(amount),"payout_address_present":True,
+                         "max_single_btc":str(MAX_SINGLE_PAYOUT_BTC),"max_daily_btc":str(MAX_DAILY_PAYOUT_BTC),
+                         "custody":"none"})
+            return {"withdrawal":{"id":str(wid),"account_id":str(account_id),"amount_btc":float(amount),
+                                  "payout_address":address,"status":"PROCESSING","idempotency_key":str(wid)}}
+
+
+@app.post("/internal/payouts/{withdrawal_id}/complete")
+def payout_worker_complete(withdrawal_id: UUID, body: WithdrawalComplete, request: Request):
+    require_payout_worker(request)
+    if not validate_external_txid(body.external_reference):
+        raise HTTPException(422, "external_reference must be a 64-character Bitcoin transaction id")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
+                "where id=%s and status='PROCESSING' returning account_id,amount_btc",
+                (body.external_reference.strip(),withdrawal_id),
+            )
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(409,"Withdrawal is not processing")
+            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,row[0],
+                payload={"amount_btc":str(row[1]),"external_reference":body.external_reference.strip(),"custody":"none"})
+            return {"withdrawal_id":str(withdrawal_id),"status":"PAID",
+                    "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
 
 
 @app.get("/network/economics")
