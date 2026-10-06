@@ -81,3 +81,11 @@ The check is side-effect free. It requires a configured PostgreSQL URL, strong J
 - `tools/staging_smoke.py` validates the verifier and reward-accounting contract without external side effects.
 
 Production still requires real managed infrastructure, secrets, monitoring, backups, a real public challenge adapter, and external security review.
+
+
+### Account and payout flow
+- Accounts can use email + password authentication; passwords are stored only as salted PBKDF2-HMAC-SHA256 hashes.
+- Users save a Bitcoin mainnet payout address on the account. Satoshi Hunt validates Base58Check P2PKH/P2SH and Bech32/Bech32m SegWit address formats before saving.
+- A verified public-challenge solution credits the worker share (85%) to the solving account. If a payout address is already saved, the worker share is automatically reserved into a non-custodial withdrawal queue.
+- The platform fee remains 15% and is recorded separately in the reward ledger.
+- Satoshi Hunt does not hold private keys, seed phrases, or signing material. A queued withdrawal still requires an external payout processor/operator to perform the actual BTC transfer and record its external reference.
