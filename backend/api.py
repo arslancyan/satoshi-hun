@@ -1,19 +1,52 @@
 import os
 import hashlib
 import secrets
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import jwt
 import psycopg
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 SESSION_TTL = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "")
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.0")
+
+if FRONTEND_ORIGIN:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[FRONTEND_ORIGIN],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+_RATE_WINDOW_SECONDS = 60
+_RATE_LIMITS = {
+    "auth_request": 5,
+    "auth_verify": 10,
+    "write": 60,
+}
+_rate_events = defaultdict(deque)
+
+
+def enforce_rate_limit(request: Request, bucket: str) -> None:
+    now = time.monotonic()
+    key = (bucket, request.client.host if request.client else "unknown")
+    events = _rate_events[key]
+    cutoff = now - _RATE_WINDOW_SECONDS
+    while events and events[0] <= cutoff:
+        events.popleft()
+    if len(events) >= _RATE_LIMITS[bucket]:
+        raise HTTPException(429, "Rate limit exceeded. Try again later.")
+    events.append(now)
 
 
 def db():
@@ -73,7 +106,8 @@ def health():
 
 
 @app.post("/auth/request-link")
-def request_link(body: LinkRequest):
+def request_link(body: LinkRequest, request: Request):
+    enforce_rate_limit(request, "auth_request")
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     with db() as conn:
@@ -94,7 +128,8 @@ def request_link(body: LinkRequest):
 
 
 @app.post("/auth/verify")
-def verify(body: VerifyRequest):
+def verify(body: VerifyRequest, request: Request):
+    enforce_rate_limit(request, "auth_verify")
     token_hash = hashlib.sha256(body.token.encode()).hexdigest()
     with db() as conn:
         with conn.cursor() as cur:
@@ -122,7 +157,8 @@ def me(account_id: UUID = Depends(account_id_from_auth)):
 
 
 @app.post("/workers")
-def create_worker(body: WorkerCreate, account_id: UUID = Depends(account_id_from_auth)):
+def create_worker(body: WorkerCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
     wid = uuid4()
     with db() as conn:
         with conn.cursor() as cur:
@@ -143,7 +179,8 @@ def list_workers(account_id: UUID = Depends(account_id_from_auth)):
 
 
 @app.post("/jobs")
-def create_job(body: JobCreate, account_id: UUID = Depends(account_id_from_auth)):
+def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
     if body.scope != "public-reward-challenge":
         raise HTTPException(400, "Only public-reward-challenge jobs are allowed")
     jid = uuid4()
@@ -154,7 +191,8 @@ def create_job(body: JobCreate, account_id: UUID = Depends(account_id_from_auth)
 
 
 @app.post("/jobs/{job_id}/claims")
-def claim(job_id: UUID, body: ClaimCreate, account_id: UUID = Depends(account_id_from_auth)):
+def claim(job_id: UUID, body: ClaimCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -206,7 +244,8 @@ def audit_account(account_id: UUID = Depends(account_id_from_auth)):
 
     
 @app.post("/workers/{worker_id}/heartbeat")
-def worker_heartbeat(worker_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
+def worker_heartbeat(worker_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
