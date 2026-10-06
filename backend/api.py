@@ -782,7 +782,7 @@ def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingest
             )
             cur.execute(
                 "select id from jobs where puzzle_id=%s and scope='public-reward-challenge' "
-                "and status in ('QUEUED','RUNNING','COMPLETED') order by created_at desc limit 1 for update",
+                "order by created_at desc limit 1 for update",
                 (body.id,),
             )
             existing = cur.fetchone()
