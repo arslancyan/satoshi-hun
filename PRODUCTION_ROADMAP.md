@@ -71,3 +71,7 @@ Remaining production gates are infrastructure deployment, real challenge adapter
 
 ## 13. Production configuration preflight
 Implemented: side-effect-free `production_check.py` validates required production secrets, shared Redis rate limiting, explicit HTTPS frontend origin, and bounded assignment settings before launch. This is a deployment gate, not a substitute for infrastructure or external security review.
+
+
+## 14. Staging and operations hardening
+Implemented in repository: end-to-end verifier/reward contract tests, concurrency contract tests, a side-effect-free staging smoke script, operational incident procedures, backup/restore drill procedure, and explicit launch gates. Remaining: execute these against real staging infrastructure and record CI/staging evidence.
