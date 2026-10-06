@@ -50,13 +50,17 @@ jobs:
 
   deploy:
     needs: staging
-    if: ${{ success() && secrets.RAILWAY_TOKEN != '' }}
+    if: ${{ success() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
       - name: Deploy API after staging gate
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service satoshi-hunt-api --environment production --detach
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "RAILWAY_TOKEN is not configured; staging gate passed, deployment skipped safely."
+            exit 0
+          fi
+          npm install -g @railway/cli
+          railway up --service satoshi-hunt-api --environment production --detach
