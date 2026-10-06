@@ -638,12 +638,65 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             else:
                 job_id=uuid4()
                 cur.execute("insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED')",(job_id,challenge_id))
-            cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')",(job_id,))
-            if cur.fetchone(): raise HTTPException(409,"Challenge is already being run by another worker")
-            capacity=economic_capacity(cur,job_id)
-            if not capacity["allowed"]: raise HTTPException(429,f"Allocation paused: {capacity['reason']}")
-            aid=uuid4()
-            cur.execute("insert into job_assignments(id,job_id,worker_id,status) values(%s,%s,%s,'ASSIGNED')",(aid,job_id,body.worker_id))
+            # One active puzzle per account. Switching puzzles pauses the previous assignment.
+            cur.execute(
+                """select a.id,a.job_id,a.worker_id,a.status,j.puzzle_id
+                   from job_assignments a
+                   join jobs j on j.id=a.job_id
+                   join workers w on w.id=a.worker_id
+                   where w.account_id=%s and a.status in ('ASSIGNED','RUNNING')
+                   for update""",
+                (account_id,),
+            )
+            active_for_account=cur.fetchall()
+            for old_assignment_id,old_job_id,old_worker_id,old_status,old_puzzle_id in active_for_account:
+                if old_puzzle_id == challenge_id and old_worker_id == body.worker_id:
+                    response={"challenge_id":challenge_id,"job_id":str(old_job_id),
+                              "assignment_id":str(old_assignment_id),"worker_id":str(body.worker_id),
+                              "status":old_status}
+                    idempotency_store(cur,account_id,request,payload,response)
+                    return response
+                cur.execute(
+                    "update job_assignments set status='PAUSED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
+                    (old_assignment_id,),
+                )
+                cur.execute(
+                    """update jobs set status='QUEUED',completed_at=null
+                       where id=%s and status in ('QUEUED','RUNNING')
+                         and not exists (
+                           select 1 from job_assignments
+                           where job_id=%s and status in ('ASSIGNED','RUNNING')
+                         )""",
+                    (old_job_id,old_job_id),
+                )
+                record_audit_event(
+                    cur,"PAUSED","assignment",old_assignment_id,account_id,old_worker_id,
+                    {"job_id":str(old_job_id),"puzzle_id":old_puzzle_id,
+                     "reason":"account_switched_puzzle","next_challenge_id":challenge_id},
+                )
+
+            # Reuse a paused assignment for the same worker/challenge.
+            cur.execute(
+                """select a.id,a.job_id from job_assignments a
+                   join jobs j on j.id=a.job_id
+                   where a.worker_id=%s and j.puzzle_id=%s and a.status='PAUSED'
+                   order by a.assigned_at desc limit 1 for update""",
+                (body.worker_id,challenge_id),
+            )
+            paused=cur.fetchone()
+            if paused:
+                aid,job_id=paused
+                capacity=economic_capacity(cur,job_id)
+                if not capacity["allowed"]: raise HTTPException(429,f"Allocation paused: {capacity['reason']}")
+                cur.execute(
+                    "update job_assignments set status='ASSIGNED',started_at=null,last_heartbeat_at=null,completed_at=null,expired_at=null where id=%s",
+                    (aid,),
+                )
+            else:
+                capacity=economic_capacity(cur,job_id)
+                if not capacity["allowed"]: raise HTTPException(429,f"Allocation paused: {capacity['reason']}")
+                aid=uuid4()
+                cur.execute("insert into job_assignments(id,job_id,worker_id,status) values(%s,%s,%s,'ASSIGNED')",(aid,job_id,body.worker_id))
             record_audit_event(cur,"CHALLENGE_SELECTED","challenge",challenge_id,account_id=account_id,worker_id=body.worker_id,
                                payload={"job_id":str(job_id),"assignment_id":str(aid),"selection":"marketplace"})
             response={"challenge_id":challenge_id,"job_id":str(job_id),"assignment_id":str(aid),"worker_id":str(body.worker_id),"status":"ASSIGNED"}
