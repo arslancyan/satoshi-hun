@@ -30,6 +30,8 @@ def eligible(p):
         and all(str(provenance.get(k, "")).strip() for k in ("url", "source_id", "checked_at"))
         and isinstance(verification, dict)
         and all(str(verification.get(k, "")).strip() for k in ("method", "source_id", "checked_at", "fingerprint"))
+        and verification.get("funding_match") is True
+        and verification.get("verification_stale") is False
     )
 
 def make_job(p):
