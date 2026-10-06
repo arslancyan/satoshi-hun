@@ -17,3 +17,11 @@ def test_non_prize_escrow_is_excluded():
 
 def test_live_prize_escrow_is_counted():
     assert _counts_toward_prize({"label":"main", "expected":"1 BTC"})
+
+from challenge_sources import ID_ALIASES, AUTHORITATIVE_ESCROW_SPEND_SLUGS
+
+def test_stable_id_alias_prevents_catalog_rename():
+    assert ID_ALIASES["peter-todd-hash-collision-bounties-0-59btc"] == "peter-todd-hash-collision-bounties"
+
+def test_authoritative_solve_rule_is_explicit():
+    assert "peter-todd-hash-collision-bounties-0-59btc" in AUTHORITATIVE_ESCROW_SPEND_SLUGS
