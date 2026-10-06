@@ -28,3 +28,10 @@ python audit.py
 Connect a verified public challenge registry, read-only blockchain/indexer balance checks, deterministic challenge-specific verifiers, authenticated worker jobs, rate limits, audit logs, and explicit-permission submission adapters.
 
 This project is not an ordinary Bitcoin wallet/private-key cracker. It is scoped to public challenges that explicitly publish a reward and permit solving.
+
+
+## Job protocol
+`protocol.py` creates bounded local jobs with CPU/time/candidate limits and a unique job ID. Candidate results are hashed for auditability. No automatic fund transfer or claim is implemented.
+
+## Registry integrity
+Run `python audit.py` before loading a registry. The audit rejects duplicate IDs, contradictory funded/empty states, and balances larger than recorded rewards.
