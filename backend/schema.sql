@@ -242,3 +242,9 @@ create table if not exists challenge_rotation_events (
 );
 create index if not exists idx_challenge_rotation_events_created
   on challenge_rotation_events(created_at desc);
+
+
+-- A user may keep multiple assignments historically, but only one may be active.
+alter table job_assignments drop constraint if exists job_assignments_status_check;
+alter table job_assignments add constraint job_assignments_status_check
+  check (status in ('ASSIGNED','RUNNING','PAUSED','COMPLETED','RELEASED','EXPIRED'));
