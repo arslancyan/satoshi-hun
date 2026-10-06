@@ -148,6 +148,23 @@ body{background-image:radial-gradient(ellipse 700px 520px at 5% 12%,rgba(0,255,9
 .progress{background:#0b140e!important;box-shadow:inset 0 0 10px rgba(0,0,0,.6)!important}.progress i{background:linear-gradient(90deg,#16e56a,#55ff7a,#ff9f1c)!important;box-shadow:0 0 12px rgba(0,255,94,.55),0 0 18px rgba(247,147,26,.25)!important}
 .title{color:#effff3!important}
 a{color:#55ff7a!important;text-shadow:0 0 10px rgba(0,255,94,.18)}
+</style><style id="progressive-disclosure">
+.panel.collapsible{overflow:hidden}
+.panel.collapsible>.panel-head,.panel.collapsible>.compact-summary{cursor:pointer;user-select:none}
+.panel.collapsible>.panel-head:after,.panel.collapsible>.compact-summary:after{
+  content:"⌄";margin-left:auto;color:#55ff7a;font-size:16px;line-height:1;transition:transform .2s ease;
+}
+.panel.collapsible.is-collapsed>.panel-head:after,.panel.collapsible.is-collapsed>.compact-summary:after{transform:rotate(-90deg)}
+.panel.collapsible.is-collapsed>.panel-body{display:none}
+.panel.collapsible>.panel-head{margin-bottom:0;min-height:34px}
+.panel.collapsible>.panel-head .panel-head-copy{min-width:0}
+.panel.collapsible>.panel-head h2{font-size:14px}
+.panel.collapsible>.panel-head span{display:block}
+.panel.collapsible .panel-body{padding-top:16px}
+.compact-note{color:#82998b;font-size:11px;margin-top:4px}
+@media(max-width:800px){
+  .panel.collapsible>.panel-head{padding:2px 0}
+}
 </style></head>
 <body>
 <div class="app">
@@ -251,4 +268,30 @@ async function loadLiveNetwork(){
 let API_TOKEN=localStorage.getItem("satoshi_hunt_session")||"";async function apiGet(path){if(!API_BASE)return null;const h=API_TOKEN?{Authorization:"Bearer "+API_TOKEN}:{};const r=await fetch(API_BASE+path,{headers:h});if(!r.ok)throw new Error("API "+r.status);return r.json()}async function syncAccount(){if(!API_BASE){$("apiState").textContent="Backend: not configured";return}try{const me=await apiGet("/me");const w=await apiGet("/workers");const a=await apiGet("/audit/account");$("apiState").textContent="Backend: connected";$("accountState").textContent="Account: "+me.email;$("workerStateApi").textContent="Workers: "+w.length;$("auditState").textContent="Contribution hours: "+Math.round(Number(a.contributed_worker_seconds||0)/3600)+" · Approved rewards: "+a.approved_reward_events; $("nWorkers").textContent=w.length;$("nActive").textContent=w.filter(x=>x.status==="ACTIVE").length;$("nHours").textContent=(Number(a.contributed_worker_seconds||0)/3600).toFixed(1)}catch(e){$("apiState").textContent="Backend: unavailable or session missing"}}syncAccount();
 async function loadRegistry(){try{const r=await fetch("puzzles.json",{cache:"no-store"});if(!r.ok)throw new Error();const d=await r.json();if(Array.isArray(d.puzzles)){registryNotice.source=d.source||"unknown";registryNotice.verified=d.verified===true; puzzles.splice(0,puzzles.length,...d.puzzles.map(p=>({id:p.id,title:p.title,type:p.type,reward:p.reward_btc,balance:p.balance_btc,status:p.status,movement:p.last_movement||"—"})));stats();filters();render();updateNetwork()}}catch(e){}};function updateNetwork(){const funded=puzzles.filter(p=>p.status==="OPEN + FUNDED").length;$("nWorkers").textContent="—";$("nActive").textContent="—";$("nCoverage").textContent=funded+" demo";$("nHours").textContent="—"}loadRegistry();\nloadLiveNetwork();\nloadMarketplace();\nloadAuditExplorer();updateNetwork();</script>
 <footer style="margin:24px 0 6px;color:#526177;font-size:10px;letter-spacing:.08em;text-align:center">SATOSHI HUNT · PUBLIC DEMO UI · © 2026</footer>
-</body></html>
+<script id="progressive-disclosure-js">
+(function(){
+  const alwaysOpen=new Set(["Available challenges","What can I work on?"]);
+  const compact=document.querySelectorAll(".app > section.panel");
+  compact.forEach(panel=>{
+    const head=panel.querySelector(":scope > .panel-head");
+    const title=head?.querySelector("h2")?.textContent?.trim();
+    if(!head||!title||alwaysOpen.has(title)) return;
+    const body=document.createElement("div");
+    body.className="panel-body";
+    while(head.nextSibling) body.appendChild(head.nextSibling);
+    panel.appendChild(body);
+    panel.classList.add("collapsible","is-collapsed");
+    head.setAttribute("role","button");
+    head.setAttribute("tabindex","0");
+    head.setAttribute("aria-expanded","false");
+    const toggle=()=>{
+      const collapsed=panel.classList.toggle("is-collapsed");
+      head.setAttribute("aria-expanded",String(!collapsed));
+    };
+    head.addEventListener("click",toggle);
+    head.addEventListener("keydown",e=>{
+      if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}
+    });
+  });
+})();
+</script></body></html>
