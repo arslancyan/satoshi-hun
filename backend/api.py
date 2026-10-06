@@ -277,11 +277,9 @@ def resume_assignment(assignment_id: UUID, request: Request, worker_id: UUID = D
             if not row: raise HTTPException(404,"Assignment not found")
             cur.execute("select cursor_next from job_checkpoints where assignment_id=%s order by created_at desc limit 1",(assignment_id,))
             cp=cur.fetchone()
-    response={"assignment_id":str(assignment_id),"status":row[1],"resume_cursor":cp[0] if cp else None}
-    with db() as conn:
-        with conn.cursor() as cur:
+            response={"assignment_id":str(assignment_id),"status":row[1],"resume_cursor":cp[0] if cp else None}
             worker_idempotency_store(cur, worker_id, request, payload, response)
-    return response
+            return response
 
 
 @app.get("/audit/explorer")
