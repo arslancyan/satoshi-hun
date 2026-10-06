@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Satoshi Hunt — Profile</title>
+<title>Satoshi Hunt — Account</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#020403;color:#ecfff0;font-family:Inter,system-ui,sans-serif}
 .wrap{max-width:900px;margin:auto;padding:22px}.nav{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #55ff7a2b;padding:14px 0}.brand{font-weight:950;letter-spacing:.15em;background:linear-gradient(100deg,#fff,#55ff7a 48%,#ff9f1c);background-size:180% auto;-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 20px #55ff7a33;animation:brandGlow 3.5s ease-in-out infinite alternate}@keyframes brandGlow{0%{background-position:0% 50%;filter:brightness(1);text-shadow:0 0 14px #55ff7a22}100%{background-position:100% 50%;filter:brightness(1.18);text-shadow:0 0 24px #55ff7a55}}.muted{color:#82998b;font-size:11px;line-height:1.6}.nav a{color:#55ff7a;text-decoration:none;font-size:11px;font-weight:900;margin-left:14px}
@@ -12,8 +12,8 @@ h1{font-size:34px;margin:35px 0 6px}.grid{display:grid;grid-template-columns:1fr
 </head>
 <body>
 <main class="wrap">
-<nav class="nav"><div><div class="brand">SATOSHI HUNT</div><div class="muted">PROFILE · ACCOUNT CENTER</div></div><div><a href="index.html#marketplace">MARKETPLACE</a><a href="index.html">HOME</a></div></nav>
-<h1>Profile</h1>
+<nav class="nav"><div><div class="brand">SATOSHI HUNT</div><div class="muted">ACCOUNT · ACCOUNT CENTER</div></div><div><a href="index.html#marketplace">MARKETPLACE</a><a href="index.html">HOME</a></div></nav>
+<h1>Account</h1>
 <div id="state" class="muted">Loading your account…</div>
 <section id="auth" class="grid">
 <div class="card"><h2>Sign Up</h2><p class="muted">Create a Satoshi Hunt account. Password must be at least 12 characters.</p><input id="suE" type="email" placeholder="Email"><input id="suP" type="password" placeholder="Password"><button class="btn primary" onclick="auth('/auth/register','suE','suP','suM')">CREATE ACCOUNT</button><div id="suM" class="msg"></div></div>
