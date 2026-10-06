@@ -12,3 +12,7 @@ create index if not exists idx_assignments_stale on job_assignments(status,last_
 alter table reward_events drop constraint if exists reward_events_settlement_status_check;
 alter table reward_events add constraint reward_events_settlement_status_check
   check (settlement_status in ('REVIEW','APPROVED','SETTLED','VOID'));
+
+-- Per-worker authentication token (hash only).
+alter table workers add column if not exists token_hash text;
+create unique index if not exists uq_workers_token_hash on workers(token_hash) where token_hash is not null;
