@@ -60,3 +60,11 @@ def test_protocol_eligibility_requires_complete_public_metadata():
     assert eligible(record) is False
     record["provenance"]["checked_at"] = "2026-10-06T00:00:00Z"
     assert eligible(record) is True
+
+
+def test_worker_solver_gate_requires_public_scope_and_metadata():
+    from pathlib import Path
+    worker = Path("worker.py").read_text()
+    assert 'p.get("rules") != "public-reward-challenge"' in worker
+    assert 'metadata_ok' in worker
+    assert 'fully verified for local work' in worker
