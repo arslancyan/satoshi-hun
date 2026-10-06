@@ -30,5 +30,8 @@ jobs:
       - name: Audit challenge registry
         run: python audit.py puzzles.json
 
+      - name: Run integrity tests
+        run: pytest -q
+
       - name: Validate demo registry JSON
         run: python -m json.tool puzzles.json > /dev/null
