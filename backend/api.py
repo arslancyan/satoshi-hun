@@ -1065,14 +1065,26 @@ def expire_stale_assignments(cur):
     cur.execute(
         "update job_assignments set status='EXPIRED',expired_at=now() "
         "where status in ('ASSIGNED','RUNNING') "
-        "and coalesce(last_heartbeat_at,assigned_at) < %s returning job_id",
+        "and coalesce(last_heartbeat_at,assigned_at) < %s "
+        "returning id,job_id,worker_id",
         (cutoff,),
     )
-    for (job_id,) in cur.fetchall():
+    for assignment_id,job_id,worker_id in cur.fetchall():
         cur.execute(
             "update jobs set status='QUEUED',completed_at=null "
             "where id=%s and status in ('RUNNING','QUEUED')",
             (job_id,),
+        )
+        cur.execute("select account_id from workers where id=%s", (worker_id,))
+        account_row=cur.fetchone()
+        record_audit_event(
+            cur,
+            "EXPIRED",
+            "assignment",
+            assignment_id,
+            account_id=account_row[0] if account_row else None,
+            worker_id=worker_id,
+            payload={"job_id":str(job_id),"timeout_seconds":ASSIGNMENT_TIMEOUT_SECONDS},
         )
 
 
