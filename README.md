@@ -6,18 +6,25 @@ Lightweight website + local CPU worker for publicly published reward puzzles.
 - Normalized puzzle registry in `puzzles.json`
 - Status/eligibility guards in `verifier.py`
 - Registry audit in `audit.py`
-- Local CPU queue guard in `worker.py`
+- Local CPU queue guard and real challenge solver path in `worker.py`
 - Dashboard filters for funded/open/solved/empty states
 
 Only **OPEN + FUNDED** records are eligible for the local solver queue.
 
 A zero balance alone is not proof that a puzzle was solved.
 
-## Run worker
+## Run the real solver worker
 ```bash
 pip install -r requirements.txt
+export SATOSHI_HUNT_API="https://satoshi-hunt-api-production.up.railway.app"
+export SATOSHI_HUNT_TOKEN="<worker token>"
+export SATOSHI_HUNT_WORKER_ID="<worker id>"
 python worker.py
 ```
+
+The API worker no longer submits demo candidates. For the Peter Todd hash-collision family it performs a genuine birthday-search over the published hash algorithms and submits a candidate only after an independent local digest equality check. Search is memory-bounded and can be stopped by the account UI. Optional controls: `SATOSHI_HUNT_ALGORITHM`, `SATOSHI_HUNT_MAX_CANDIDATES`, `SATOSHI_HUNT_MAX_MEMORY_MB`, and `SATOSHI_HUNT_START_CURSOR`.
+
+**Important:** a real search is not the same as a guaranteed solution. The published SHA-256/RIPEMD-160/Hash160/Hash256 collision conditions are cryptographically hard; ordinary PCs and phones should not be expected to find a full-width collision in practical time. The worker performs genuine computation and will never fabricate a winning claim.
 
 ## Mobile worker
 
@@ -42,7 +49,7 @@ This project is not an ordinary Bitcoin wallet/private-key cracker. It is scoped
 
 
 ## Job protocol
-`protocol.py` creates bounded local jobs with CPU/time/candidate limits and a unique job ID. Candidate results are hashed for auditability. Public challenge claims can be verified automatically by a registered server-side adapter. Verified rewards are credited to the non-custodial reward ledger; actual BTC transfer remains outside the application.
+`protocol.py` creates bounded local jobs with CPU/time/candidate limits and a unique job ID. Candidate results are hashed for auditability. Public challenge claims can be verified automatically by a registered server-side adapter. The current Peter Todd worker path performs real hash computations; it does not use the former demo marker. Verified rewards are credited to the non-custodial reward ledger; actual BTC transfer remains outside the application.
 
 ## Registry integrity
 Run `python audit.py` before loading a registry. The audit rejects duplicate IDs, contradictory funded/empty states, and balances larger than recorded rewards.
