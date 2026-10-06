@@ -25,7 +25,7 @@ jobs:
         run: python -m pip install -r backend/requirements.txt
 
       - name: Compile backend
-        run: python -m py_compile backend/api.py backend/../audit.py backend/../protocol.py backend/../verifier.py
+        run: python -m py_compile backend/api.py backend/../audit.py backend/../protocol.py backend/../verifier.py worker.py
 
       - name: Validate demo registry JSON
         run: python -m json.tool puzzles.json > /dev/null
