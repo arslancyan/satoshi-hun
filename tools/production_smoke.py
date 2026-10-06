@@ -36,3 +36,5 @@ s,h,b=request("/account/payout-address","PUT",{"btc_payout_address":"not-a-bitco
 ok &= check("invalid wallet rejected", s in (401,422), f"{s} {b}")
 print("SMOKE_RESULT="+("PASS" if ok else "FAIL"))
 sys.exit(0 if ok else 1)
+
+# Production gate: browser-preflight validation remains enabled.
