@@ -18,3 +18,9 @@ def test_schema_keeps_non_custodial_boundary():
 def test_worker_idempotency_table_follows_workers_table():
     sql=Path("backend/schema.sql").read_text()
     assert sql.index("create table if not exists workers") < sql.index("create table if not exists worker_idempotency_records")
+
+
+def test_reward_event_keeps_claim_provenance():
+    sql=Path("backend/schema.sql").read_text()
+    assert "source_claim_id uuid references work_claims(id)" in sql
+    assert "uq_reward_event_claim" in sql
