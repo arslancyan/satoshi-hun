@@ -1655,9 +1655,7 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                     "values(%s,%s,'DUPLICATE_CLAIM','WARN',%s::jsonb)",
                     (uuid4(),token_worker_id,json.dumps({"job_id":str(job_id),"candidate_hash":body.candidate_hash})),
                 )
-                response={"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
-                worker_idempotency_store(cur, token_worker_id, request, payload, response)
-                return response
+                raise HTTPException(409, "Duplicate candidate claim")
 
             record_audit_event(
                 cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,
