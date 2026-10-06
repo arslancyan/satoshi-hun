@@ -2202,6 +2202,9 @@ def confirm_broadcast(withdrawal_id: UUID, body: BroadcastPayout, request: Reque
             if not row: raise HTTPException(404,"Payout settlement not found")
             if row[1] not in ("SIGNED","BROADCAST"): raise HTTPException(409,"Settlement is not signed")
             if not row[4]: raise HTTPException(409,"Signed PSBT is missing")
+            computed_txid,_=_verify_payout_transaction(row[4],row[2],row[3])
+            if not hmac.compare_digest(computed_txid,txid):
+                raise HTTPException(422,"Broadcast TXID does not match the signed transaction")
             cur.execute(
                 "update payout_settlements set status='BROADCAST',txid=%s,updated_at=now(),broadcast_at=coalesce(broadcast_at,now()) where id=%s",
                 (txid,row[0]),
