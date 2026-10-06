@@ -1,6 +1,6 @@
 # Satoshi Hunt backend
 
-Non-custodial API foundation for account, worker, job attribution and audit metadata.
+Non-custodial API foundation for account, worker, job assignment and audit metadata.
 
 ## Run
 
@@ -18,6 +18,28 @@ pip install -r requirements.txt
 uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
+## Worker API mode
+
+The opt-in worker can poll assignments and report server-side heartbeats.
+
+Set:
+
+```bash
+export SATOSHI_HUNT_API="https://your-api.example"
+export SATOSHI_HUNT_TOKEN="YOUR_ACCOUNT_SESSION"
+export SATOSHI_HUNT_WORKER_ID="YOUR_REGISTERED_WORKER_UUID"
+python worker.py
+```
+
+The worker:
+- accepts only assignments already attached to its registered worker;
+- starts and heartbeats assignments;
+- submits a non-solving demo candidate marker;
+- completes the assignment so server timestamps become verified worker-hours;
+- never receives or stores private keys, seed phrases, or wallet credentials.
+
+A real challenge adapter must be added separately for each public reward challenge and must use that challenge's published verification rules.
+
 ## Security boundary
 
 - Never store private keys, seed phrases, signing secrets, or wallet credentials.
@@ -26,6 +48,7 @@ uvicorn api:app --host 127.0.0.1 --port 8000
 - Email delivery is intentionally not bundled; production deployment should connect an email provider for magic-link delivery.
 - Reward records are accounting metadata and remain in REVIEW until an authorized operator approves settlement.
 - No automatic Bitcoin transfer is implemented.
+- In-memory rate limiting is prototype-level; production should use a shared/distributed limiter.
 
 ## API
 
@@ -35,8 +58,19 @@ uvicorn api:app --host 127.0.0.1 --port 8000
 - `GET /me`
 - `POST /workers`
 - `GET /workers`
+- `POST /workers/{worker_id}/heartbeat`
+- `GET /workers/{worker_id}/assignments`
 - `POST /jobs`
+- `GET /jobs`
+- `GET /jobs/{job_id}`
+- `POST /jobs/{job_id}/assign`
 - `POST /jobs/{job_id}/claims`
+- `POST /assignments/{assignment_id}/start`
+- `POST /assignments/{assignment_id}/heartbeat`
+- `POST /assignments/{assignment_id}/complete`
 - `GET /audit/account`
+
+Job state is intentionally separate from solution verification:
+`QUEUED → RUNNING → COMPLETED`, while a challenge-specific verified result moves a job to `VERIFIED`.
 
 The API only creates jobs for the `public-reward-challenge` scope and deduplicates candidate hashes per job.
