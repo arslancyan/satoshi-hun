@@ -1,0 +1,64 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pip install -r backend/requirements.txt
+      - name: Run tests
+        run: pytest -q
+
+  postgres-schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: satoshi_hunt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d satoshi_hunt"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install database dependency
+        run: pip install "psycopg[binary]>=3.2,<4"
+      - name: Apply schema and migrations
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/satoshi_hunt
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg
+          root = "backend"
+          files = ["schema.sql"] + sorted(
+              os.path.join("migrations", f)
+              for f in os.listdir(os.path.join(root, "migrations"))
+              if f.endswith(".sql")
+          )
+          with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+              with conn.cursor() as cur:
+                  for path in files:
+                      cur.execute(open(os.path.join(root, path), encoding="utf-8").read())
+          print("Applied:", files)
+          PY
