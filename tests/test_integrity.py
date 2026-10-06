@@ -44,3 +44,19 @@ def test_protocol_requires_provenance_and_verification():
     record["provenance"] = {"url": "https://example.com", "checked_at": "2026-01-01T00:00:00Z"}
     record["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc"}
     assert protocol_eligible(record) is True
+
+def test_verified_result_pipeline_requires_registered_adapter():
+    from verifier import verify_candidate
+    record = {
+        "id": "adapter-test",
+        "type": "unknown",
+        "status": "OPEN + FUNDED",
+        "balance_btc": 1,
+        "reward_btc": 1,
+        "rules": "public-reward-challenge",
+        "provenance": {"url": "https://example.com/challenge", "checked_at": "2026-01-01T00:00:00Z"},
+        "verification": {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc"},
+    }
+    result = verify_candidate(record, "candidate")
+    assert result["verified"] is False
+    assert "No challenge-specific verifier" in result["reason"]
