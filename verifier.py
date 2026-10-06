@@ -69,8 +69,8 @@ def eligible(record):
     return (
         classify(record) == "OPEN + FUNDED"
         and record.get("rules") == "public-reward-challenge"
-        and record.get("provenance")
-        and record.get("verification")
+        and bool(record.get("provenance"))
+        and bool(record.get("verification"))
     )
 
 
