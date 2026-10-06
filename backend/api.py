@@ -223,6 +223,19 @@ def create_worker(body: WorkerCreate, request: Request, account_id: UUID = Depen
     return {"id": str(wid), "label": body.label, "status": "ACTIVE", "worker_token": worker_token}
 
 
+@app.post("/workers/{worker_id}/revoke")
+def revoke_worker(worker_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("update workers set status='REVOKED',token_hash=null where id=%s and account_id=%s returning id", (worker_id, account_id))
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Worker not found")
+            record_audit_event(cur,"REVOKED","worker",worker_id,account_id,worker_id,{"reason":"account_requested"})
+    return {"ok":True,"worker_id":str(worker_id),"status":"REVOKED"}
+
+
 @app.get("/workers")
 def list_workers(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
