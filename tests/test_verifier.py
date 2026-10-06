@@ -87,3 +87,18 @@ def test_non_object_metadata_is_not_solver_eligible():
     record["provenance"] = "https://example.com/challenge"
     result = verify_candidate_hash(record, "abc123")
     assert result["verified"] is False
+
+
+def test_peter_todd_hash_collision_adapter_contract():
+    record=_record("hash-collision")
+    record["provenance"]={"url":"https://github.com/floflo777/open-crypto-puzzles","source_id":"peter-todd-hash-collision-bounties","checked_at":"2026-08-16"}
+    record["verification"]={"method":"published-hash-collision-rule","source_id":"peter-todd-hash-collision-bounties","checked_at":"2026-08-16","fingerprint":"public-puzzle-record"}
+    result=verify_candidate_hash(record,"sha256:00:01")
+    assert result["verified"] is False
+
+
+def test_peter_todd_hash_collision_rejects_same_message():
+    record=_record("hash-collision")
+    record["provenance"]={"url":"https://github.com/floflo777/open-crypto-puzzles","source_id":"peter-todd-hash-collision-bounties","checked_at":"2026-08-16"}
+    record["verification"]={"method":"published-hash-collision-rule","source_id":"peter-todd-hash-collision-bounties","checked_at":"2026-08-16","fingerprint":"public-puzzle-record"}
+    assert verify_candidate_hash(record,"sha256:00:00")["verified"] is False
