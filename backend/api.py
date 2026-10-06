@@ -192,6 +192,27 @@ def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
     return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4],"assignment":None if r[5] is None else {"id":str(r[5]),"worker_id":str(r[6]),"status":r[7],"assigned_at":r[8],"started_at":r[9],"completed_at":r[10],"last_heartbeat_at":r[11],"verified_seconds":r[12]}} for r in rows]
 
 
+@app.get("/workers/{worker_id}/assignments")
+def worker_assignments(worker_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            if not worker_owned(cur, worker_id, account_id):
+                raise HTTPException(404, "Worker not found")
+            cur.execute(
+                "select a.id,a.job_id,j.puzzle_id,a.status,a.assigned_at,a.started_at,"
+                "a.completed_at,a.last_heartbeat_at,a.verified_seconds "
+                "from job_assignments a join jobs j on j.id=a.job_id "
+                "where a.worker_id=%s order by a.assigned_at desc limit 25",
+                (worker_id,),
+            )
+            rows = cur.fetchall()
+    return [{
+        "id": str(r[0]), "job_id": str(r[1]), "puzzle_id": r[2], "status": r[3],
+        "assigned_at": r[4], "started_at": r[5], "completed_at": r[6],
+        "last_heartbeat_at": r[7], "verified_seconds": r[8]
+    } for r in rows]
+
+
 @app.get("/jobs/{job_id}")
 def get_job(job_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
