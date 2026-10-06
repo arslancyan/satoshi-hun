@@ -130,10 +130,18 @@ async def handler(ws):
             continue
         p = m.get("puzzle", {})
         pid = p.get("id", "?")
-        if p.get("status") != "OPEN + FUNDED":
+        provenance = p.get("provenance")
+        verification = p.get("verification")
+        metadata_ok = (
+            isinstance(provenance, dict)
+            and all(str(provenance.get(k, "")).strip() for k in ("url", "source_id", "checked_at"))
+            and isinstance(verification, dict)
+            and all(str(verification.get(k, "")).strip() for k in ("method", "source_id", "checked_at", "fingerprint"))
+        )
+        if p.get("status") != "OPEN + FUNDED" or p.get("rules") != "public-reward-challenge" or not metadata_ok:
             await ws.send(json.dumps({
                 "type": "result",
-                "message": f"#{pid} rejected: only OPEN + FUNDED jobs enter the solver queue."
+                "message": f"#{pid} rejected: challenge is not fully verified for local work."
             }))
             continue
         for i in range(0, 101, 10):
