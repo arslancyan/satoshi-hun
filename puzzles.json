@@ -89,10 +89,18 @@
     }
   ],
   "verified": false,
-  "registry_version": 2,
+  "registry_version": 3,
   "fields": {
-    "provenance": "Required for production records",
-    "verification": "Required before solver eligibility",
+    "provenance": {
+      "url": "Trusted public challenge source URL",
+      "checked_at": "UTC timestamp",
+      "source_id": "Stable source/challenge identifier"
+    },
+    "verification": {
+      "method": "Challenge-specific published verification rule",
+      "checked_at": "UTC timestamp",
+      "fingerprint": "SHA-256 of canonical verification record"
+    },
     "coverage": "Reserved for work-allocation metrics",
     "last_checked_at": "Reserved for backend verification timestamp"
   }
