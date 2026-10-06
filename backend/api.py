@@ -95,6 +95,7 @@ class JobCreate(BaseModel):
 
 
 class ClaimCreate(BaseModel):
+    worker_id: UUID
     candidate_hash: str = Field(min_length=32, max_length=128)
     result_status: str = Field(default="TESTED", pattern="^(TESTED|VERIFIED|REJECTED)$")
     cpu_seconds: int = Field(default=0, ge=0, le=86400)
@@ -229,12 +230,12 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, account_id: UUID = 
             if not cur.fetchone():
                 raise HTTPException(404, "Job not found")
             cur.execute(
-                "select w.id from workers w where w.account_id=%s and w.status='ACTIVE' order by last_seen_at desc nulls last limit 1",
-                (account_id,),
+                "select w.id from workers w where w.id=%s and w.account_id=%s and w.status='ACTIVE'",
+                (body.worker_id, account_id),
             )
             worker = cur.fetchone()
             if not worker:
-                raise HTTPException(400, "Register an active worker first")
+                raise HTTPException(400, "Selected worker is not active or does not belong to this account")
             cid = uuid4()
             try:
                 cur.execute(
