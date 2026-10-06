@@ -210,7 +210,7 @@ def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
         with conn.cursor() as cur:
             cur.execute("select j.id,j.puzzle_id,j.status,j.created_at,j.completed_at,a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,a.last_heartbeat_at,a.verified_seconds from jobs j left join job_assignments a on a.job_id=j.id and a.status in ('ASSIGNED','RUNNING') where j.scope='public-reward-challenge' order by j.created_at desc limit 50")
             rows = cur.fetchall()
-    return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4],"assignment":None if r[5] is None else {"id":str(r[5]),"worker_id":str(r[6]),"status":r[7],"assigned_at":r[8],"started_at":r[9],"completed_at":r[10],"last_heartbeat_at":r[11],"verified_seconds":r[12]}} for r in rows]
+    return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4],"assignment":None if r[5] is None else {"id":str(r[5]),"worker_id":str(r[6]),"status":r[7],"assigned_at":r[8],"started_at":r[9],"completed_at":r[10],"last_heartbeat_at":r[11],"contribution_seconds":r[12]}} for r in rows]
 
 
 @app.get("/workers/{worker_id}/assignments")
@@ -244,7 +244,7 @@ def get_job(job_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
                 raise HTTPException(404, "Job not found")
             cur.execute("select id,worker_id,status,assigned_at,started_at,completed_at,last_heartbeat_at,verified_seconds from job_assignments where job_id=%s order by assigned_at desc limit 10", (job_id,))
             assignments = cur.fetchall()
-    return {"id":str(row[0]),"puzzle_id":row[1],"scope":row[2],"status":row[3],"created_at":row[4],"completed_at":row[5],"assignments":[{"id":str(a[0]),"worker_id":str(a[1]),"status":a[2],"assigned_at":a[3],"started_at":a[4],"completed_at":a[5],"last_heartbeat_at":a[6],"verified_seconds":a[7]} for a in assignments]}
+    return {"id":str(row[0]),"puzzle_id":row[1],"scope":row[2],"status":row[3],"created_at":row[4],"completed_at":row[5],"assignments":[{"id":str(a[0]),"worker_id":str(a[1]),"status":a[2],"assigned_at":a[3],"started_at":a[4],"completed_at":a[5],"last_heartbeat_at":a[6],"contribution_seconds":a[7]} for a in assignments]}
 
 
 @app.post("/jobs")
@@ -345,7 +345,7 @@ def complete_assignment(assignment_id: UUID, request: Request, account_id: UUID 
             cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s",(now,now,seconds,assignment_id))
             cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
             cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
-    return {"assignment_id":str(assignment_id),"status":"COMPLETED","verified_seconds":seconds}
+    return {"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
 
 
 @app.post("/jobs/{job_id}/claims")
@@ -410,7 +410,7 @@ def audit_account(account_id: UUID = Depends(account_id_from_auth)):
             cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='REJECTED'",(account_id,))
             rejected_claims=cur.fetchone()[0]
     reliability=round((verified_claims/(verified_claims+rejected_claims))*100,2) if verified_claims+rejected_claims else 0.0
-    return {"workers":workers,"verified_worker_seconds":seconds,"approved_reward_events":rewards,"verified_claims":verified_claims,"rejected_claims":rejected_claims,"reliability_score":reliability}
+    return {"workers":workers,"contributed_worker_seconds":seconds,"approved_reward_events":rewards,"verified_claims":verified_claims,"rejected_claims":rejected_claims,"reliability_score":reliability}
 
 
 @app.post("/jobs/{job_id}/verify")
