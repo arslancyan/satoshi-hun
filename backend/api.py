@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import jwt
 import psycopg
+import redis
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
@@ -17,6 +18,8 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "")
 SESSION_TTL = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
 ASSIGNMENT_TIMEOUT_SECONDS = max(30, int(os.environ.get("ASSIGNMENT_TIMEOUT_SECONDS", "120")))
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "")
+RATE_LIMIT_REDIS_URL = os.environ.get("RATE_LIMIT_REDIS_URL", "")
+_redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.0")
 
@@ -39,8 +42,24 @@ _rate_events = defaultdict(deque)
 
 
 def enforce_rate_limit(request: Request, bucket: str) -> None:
+    client = request.client.host if request.client else "unknown"
+    if _redis:
+        key = f"satoshi-hunt:rate:{bucket}:{client}"
+        try:
+            count = _redis.incr(key)
+            if count == 1:
+                _redis.expire(key, _RATE_WINDOW_SECONDS)
+            if count > _RATE_LIMITS[bucket]:
+                raise HTTPException(429, "Rate limit exceeded. Try again later.")
+            return
+        except HTTPException:
+            raise
+        except Exception:
+            # Redis failure falls back to local development limiter rather than
+            # silently disabling abuse protection.
+            pass
     now = time.monotonic()
-    key = (bucket, request.client.host if request.client else "unknown")
+    key = (bucket, client)
     events = _rate_events[key]
     cutoff = now - _RATE_WINDOW_SECONDS
     while events and events[0] <= cutoff:
