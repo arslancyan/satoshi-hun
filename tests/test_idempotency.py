@@ -51,3 +51,11 @@ def test_worker_idempotency_is_stable_for_same_worker_request():
     a = worker_fingerprint("worker-a", "POST", "/assignments/1/checkpoint", {"cursor_next": 10, "nonce": "n"})
     b = worker_fingerprint("worker-a", "POST", "/assignments/1/checkpoint", {"nonce": "n", "cursor_next": 10})
     assert a == b
+
+
+def test_worker_heartbeat_uses_worker_idempotency():
+    from pathlib import Path
+    api=Path("backend/api.py").read_text()
+    section=api[api.index('@app.post("/workers/{worker_id}/heartbeat")'):api.index('@app.get("/jobs")')]
+    assert "worker_idempotency_replay" in section
+    assert "worker_idempotency_store" in section
