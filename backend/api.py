@@ -537,6 +537,35 @@ def idempotency_key(request: Request):
     return None
 
 
+
+
+def idempotency_fingerprint(request: Request, payload) -> str:
+    canonical = json.dumps({"method": request.method, "path": request.url.path, "payload": payload}, sort_keys=True, separators=(",", ":"), default=str).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def idempotency_replay(cur, account_id: UUID, request: Request, payload):
+    key = idempotency_key(request)
+    if not key:
+        return None
+    fingerprint = idempotency_fingerprint(request, payload)
+    cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"satoshi-hunt:idempotency:{account_id}:{key}",))
+    cur.execute("select request_hash,response_json from idempotency_records where account_id=%s and idempotency_key=%s", (account_id, key))
+    row = cur.fetchone()
+    if not row:
+        return None
+    if row[0] != fingerprint:
+        raise HTTPException(409, "Idempotency-Key was already used with a different request")
+    return row[1]
+
+
+def idempotency_store(cur, account_id: UUID, request: Request, payload, response):
+    key = idempotency_key(request)
+    if not key:
+        return
+    fingerprint = idempotency_fingerprint(request, payload)
+    cur.execute("insert into idempotency_records(account_id,idempotency_key,request_hash,response_json) values(%s,%s,%s,%s::jsonb) on conflict (account_id,idempotency_key) do nothing", (account_id, key, fingerprint, json.dumps(response, default=str)))
+
 def worker_token():
     return secrets.token_urlsafe(32)
 
@@ -557,8 +586,14 @@ def create_worker(body: WorkerCreate, request: Request, account_id: UUID = Depen
     token_hash = hashlib.sha256(worker_token.encode()).hexdigest()
     with db() as conn:
         with conn.cursor() as cur:
+            payload = body.model_dump(mode="json")
+            replay = idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute("insert into workers(id,account_id,label,token_hash) values(%s,%s,%s,%s)", (wid, account_id, body.label, token_hash))
-    return {"id": str(wid), "label": body.label, "status": "ACTIVE", "worker_token": worker_token}
+            response = {"id": str(wid), "label": body.label, "status": "ACTIVE", "worker_token": worker_token}
+            idempotency_store(cur, account_id, request, payload, response)
+    return response
 
 
 @app.post("/workers/{worker_id}/rotate")
@@ -570,10 +605,16 @@ def rotate_worker(worker_id: UUID, request: Request, account_id: UUID = Depends(
         with conn.cursor() as cur:
             if not worker_owned(cur, worker_id, account_id, active_only=True):
                 raise HTTPException(404, "Worker not found")
+            payload = {"worker_id": str(worker_id)}
+            replay = idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute("update workers set token_hash=%s,last_seen_at=now() where id=%s and status='ACTIVE'", (token_hash,worker_id))
             if cur.rowcount != 1: raise HTTPException(409, "Worker is not active")
             record_audit_event(cur,"WORKER_TOKEN_ROTATED","worker",worker_id,account_id,worker_id,payload={"token_storage":"hash_only"})
-    return {"worker_id":str(worker_id),"worker_token":token,"storage":"memory_only"}
+            response = {"worker_id":str(worker_id),"worker_token":token,"storage":"memory_only"}
+            idempotency_store(cur, account_id, request, payload, response)
+    return response
 
 
 @app.post("/workers/{worker_id}/revoke")
@@ -581,12 +622,18 @@ def revoke_worker(worker_id: UUID, request: Request, account_id: UUID = Depends(
     enforce_rate_limit(request, "write")
     with db() as conn:
         with conn.cursor() as cur:
+            payload = {"worker_id": str(worker_id)}
+            replay = idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute("update workers set status='REVOKED',token_hash=null where id=%s and account_id=%s returning id", (worker_id, account_id))
             row=cur.fetchone()
             if not row:
                 raise HTTPException(404, "Worker not found")
             record_audit_event(cur,"REVOKED","worker",worker_id,account_id,worker_id,{"reason":"account_requested"})
-    return {"ok":True,"worker_id":str(worker_id),"status":"REVOKED"}
+            response = {"ok":True,"worker_id":str(worker_id),"status":"REVOKED"}
+            idempotency_store(cur, account_id, request, payload, response)
+    return response
 
 
 @app.get("/workers")
