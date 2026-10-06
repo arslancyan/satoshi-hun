@@ -44,3 +44,9 @@ def test_mobile_worker_exercises_resume_and_checkpoint():
     assert 'f"/assignments/{assignment_id}/checkpoint"' in MOBILE
     assert "start_cursor" in MOBILE
     assert "cursor_next" in MOBILE
+
+
+def test_mutation_retry_reuses_same_request_id():
+    assert "return api_json(path, method, payload, request_id)" in MOBILE
+    assert "except (urllib.error.URLError, TimeoutError):" in MOBILE
+    assert "time.sleep(1)" in MOBILE
