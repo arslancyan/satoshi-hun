@@ -6,6 +6,7 @@ challenge material.
 """
 from datetime import datetime, timezone
 import hashlib
+from challenge_adapters.peter_todd_hash_collision import ADAPTER as PeterToddHashCollisionAdapter
 
 VALID={"OPEN + FUNDED","OPEN + UNFUNDED","SOLVED + FUNDED","SOLVED + EMPTY","UNKNOWN"}
 
@@ -117,6 +118,7 @@ class HashCommitmentAdapter(ChallengeAdapter):
 
 
 register_adapter(HashCommitmentAdapter())
+register_adapter(PeterToddHashCollisionAdapter)
 
 
 def verify_candidate_hash(record, candidate_hash):
