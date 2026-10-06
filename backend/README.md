@@ -38,7 +38,7 @@ The worker:
 - completes the assignment so server timestamps become verified worker-hours;
 - never receives or stores private keys, seed phrases, or wallet credentials.
 
-A real challenge adapter must be added separately for each public reward challenge and must use that challenge's published verification rules.
+A real challenge adapter must be added separately for each public reward challenge and must use that challenge's published verification rules. A registry entry is not solver-eligible until trusted provenance and verification metadata are present.
 
 ## Security boundary
 
