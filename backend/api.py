@@ -757,15 +757,21 @@ def list_workers(account_id: UUID = Depends(account_id_from_auth)):
 @app.post("/workers/{worker_id}/heartbeat")
 def worker_heartbeat(worker_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
+    payload={"worker_id":str(worker_id)}
     with db() as conn:
         with conn.cursor() as cur:
             if token_worker_id != worker_id:
                 raise HTTPException(403, "Worker token does not match worker")
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute("select id from workers where id=%s and status='ACTIVE'", (worker_id,))
             if not cur.fetchone():
                 raise HTTPException(404, "Worker not found")
             cur.execute("update workers set last_seen_at=now() where id=%s", (worker_id,))
-    return {"ok": True, "worker_id": str(worker_id)}
+            response={"ok": True, "worker_id": str(worker_id)}
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
+            return response
 
 
 @app.get("/jobs")
