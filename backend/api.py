@@ -227,6 +227,28 @@ def health():
     return {"ok": True, "service": "satoshi-hunt-api", "custody": "non-custodial"}
 
 
+@app.get("/ready")
+def ready():
+    if not DATABASE_URL:
+        raise HTTPException(503, "DATABASE_URL is not configured")
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("select 1")
+                cur.fetchone()
+    except Exception as exc:
+        logging.error("Database readiness check failed: %s", type(exc).__name__)
+        raise HTTPException(503, "Database unavailable")
+    redis_ok = True
+    if _redis:
+        try:
+            _redis.ping()
+        except Exception:
+            redis_ok = False
+    return {"ready": True, "database": True, "redis": redis_ok, "rate_limit_mode": "redis" if _redis and redis_ok else "fallback"}
+
+
+
 @app.post("/auth/request-link")
 def request_link(body: LinkRequest, request: Request):
     enforce_rate_limit(request, "auth_request")
