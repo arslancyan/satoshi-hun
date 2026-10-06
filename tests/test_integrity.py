@@ -29,7 +29,7 @@ def test_verifier_requires_provenance_and_verification():
     }
     assert verifier_eligible(base) is False
     base["provenance"] = {"url": "https://example.com", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z"}
-    base["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False}
+    base["verification"] = {"method": "published-rule", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False}
     assert verifier_eligible(base) is True
 
 
@@ -42,7 +42,7 @@ def test_protocol_requires_provenance_and_verification():
     }
     assert protocol_eligible(record) is False
     record["provenance"] = {"url": "https://example.com", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z"}
-    record["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False}
+    record["verification"] = {"method": "published-rule", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False}
     assert protocol_eligible(record) is True
 
 def test_verified_result_pipeline_requires_registered_adapter():
