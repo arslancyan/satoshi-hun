@@ -343,3 +343,15 @@ def audit_account(account_id: UUID = Depends(account_id_from_auth)):
             cur.execute("select count(*) from reward_events where account_id=%s and settlement_status in ('APPROVED','SETTLED')",(account_id,))
             rewards=cur.fetchone()[0]
     return {"workers":workers,"verified_worker_seconds":seconds,"approved_reward_events":rewards}
+
+
+@app.post("/jobs/{job_id}/verify")
+def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    """Mark a completed public-challenge job verified only after an adapter has
+    independently validated its submitted candidate. This endpoint intentionally
+    does not perform private-key or wallet access."""
+    enforce_rate_limit(request, "write")
+    raise HTTPException(
+        501,
+        "Challenge-specific verification adapter is required before a reward result can be verified.",
+    )
