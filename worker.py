@@ -11,6 +11,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+import uuid
 from urllib.parse import urlparse
 
 import websockets
@@ -37,14 +38,14 @@ def api_json(path, method="GET", payload=None):
     if parsed.scheme == "http" and parsed.hostname not in ("127.0.0.1", "localhost"):
         raise RuntimeError("Non-local worker API endpoints must use HTTPS")
     data = None if payload is None else json.dumps(payload).encode()
+    headers = {"Authorization": "Worker " + API_TOKEN, "Content-Type": "application/json"}
+    if method != "GET":
+        headers["Idempotency-Key"] = str(uuid.uuid4())
     req = urllib.request.Request(
         API_BASE + path,
         data=data,
         method=method,
-        headers={
-            "Authorization": "Worker " + API_TOKEN,
-            "Content-Type": "application/json",
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=15) as response:  # nosec B310 - URL is restricted to configured API endpoint
         return json.loads(response.read().decode())
