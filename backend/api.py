@@ -1038,9 +1038,8 @@ def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
 
 
 @app.put("/account/payout-address")
-def update_account_payout_address(request: Request, account_id: UUID = Depends(account_id_from_auth)):
+def update_account_payout_address(payload: dict, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
-    payload = request.json
     return _update_account_payout_address_sync(request, account_id, payload)
 
 
@@ -1066,9 +1065,8 @@ def _update_account_payout_address_sync(request: Request, account_id: UUID, payl
 
 
 @app.post("/account/withdrawals")
-def create_account_withdrawal(request: Request, account_id: UUID = Depends(account_id_from_auth)):
+def create_account_withdrawal(payload: dict, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
-    payload = request.json
     with db() as conn:
         with conn.cursor() as cur:
             replay = idempotency_replay(cur, account_id, request, payload)
