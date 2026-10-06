@@ -7,7 +7,7 @@ def challenge():
 
 def test_staging_happy_path_contract():
     result=verify_candidate_hash(challenge(),"abc123")
-    assert result["verified"] is True
+    assert result["verified"] is True, result
     split=split_reward(0.01)
     assert validate_reward_event({"gross_reward_btc":split["gross"],"worker_share_btc":split["worker_share"],"platform_fee_btc":split["platform_fee"]})
     assert split["worker_share"] == Decimal("0.00850000")
