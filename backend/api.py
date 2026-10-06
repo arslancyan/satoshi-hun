@@ -50,6 +50,19 @@ if ALLOWED_FRONTEND_ORIGINS:
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     )
 
+@app.middleware("http")
+async def enforce_public_cors_headers(request: Request, call_next):
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin in ALLOWED_FRONTEND_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+        if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Idempotency-Key"
+    return response
+
+
 _RATE_WINDOW_SECONDS = 60
 _RATE_LIMITS = {
     "auth_request": 5,
