@@ -11,6 +11,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 import websockets
 
@@ -30,6 +31,11 @@ HEARTBEAT_SECONDS = max(10, int(os.environ.get("SATOSHI_HUNT_HEARTBEAT_SECONDS",
 def api_json(path, method="GET", payload=None):
     if not API_BASE or not API_TOKEN:
         raise RuntimeError("SATOSHI_HUNT_API and SATOSHI_HUNT_TOKEN are required")
+    parsed = urlparse(API_BASE)
+    if parsed.scheme not in ("https", "http") or not parsed.netloc:
+        raise RuntimeError("SATOSHI_HUNT_API must be an http(s) URL")
+    if parsed.scheme == "http" and parsed.hostname not in ("127.0.0.1", "localhost"):
+        raise RuntimeError("Non-local worker API endpoints must use HTTPS")
     data = None if payload is None else json.dumps(payload).encode()
     req = urllib.request.Request(
         API_BASE + path,
@@ -88,7 +94,7 @@ async def run_assignment(assignment):
         )
         print(f"[{puzzle_id}] claim: {result.get('accepted', False)}")
         done = await asyncio.to_thread(api_call, f"/assignments/{aid}/complete")
-        print(f"[{puzzle_id}] completed: {done.get('verified_seconds', 0)} verified seconds")
+        print(f"[{puzzle_id}] completed: {done.get('contribution_seconds', 0)} contribution seconds")
     except Exception as exc:
         print(f"[{puzzle_id}] assignment error: {exc}")
 
