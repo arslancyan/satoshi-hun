@@ -37,3 +37,10 @@ def test_desktop_worker_preserves_idempotency_across_call_retries():
     assert 'def api_call(path, method="POST", payload=None):' in WORKER
     assert "request_id = str(uuid.uuid4()) if method != \"GET\" else \"\"" in WORKER
     assert "api_json(path, method, payload, request_id)" in WORKER
+
+
+def test_mobile_worker_exercises_resume_and_checkpoint():
+    assert 'f"/assignments/{assignment_id}/resume"' in MOBILE
+    assert 'f"/assignments/{assignment_id}/checkpoint"' in MOBILE
+    assert "start_cursor" in MOBILE
+    assert "cursor_next" in MOBILE
