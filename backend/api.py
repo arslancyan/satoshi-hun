@@ -341,12 +341,21 @@ def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingest
                 "provenance=excluded.provenance,verification=excluded.verification,updated_at=now()",
                 (body.id,body.title,body.challenge_type,body.reward_btc,body.balance_btc,body.status,body.rules,body.provenance,body.verification),
             )
-            job_id=uuid4()
             cur.execute(
-                "insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED')",
-                (job_id,body.id),
+                "select id from jobs where puzzle_id=%s and scope='public-reward-challenge' "
+                "and status in ('QUEUED','RUNNING','COMPLETED') order by created_at desc limit 1 for update",
+                (body.id,),
             )
-            record_audit_event(cur,"CHALLENGE_INGESTED","challenge",body.id,payload={"job_id":str(job_id),"verification_fingerprint":body.verification.get("fingerprint")})
+            existing = cur.fetchone()
+            if existing:
+                job_id = existing[0]
+            else:
+                job_id=uuid4()
+                cur.execute(
+                    "insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED')",
+                    (job_id,body.id),
+                )
+                record_audit_event(cur,"CHALLENGE_INGESTED","challenge",body.id,payload={"job_id":str(job_id),"verification_fingerprint":body.verification.get("fingerprint")})
     return {"challenge_id":body.id,"job_id":str(job_id),"status":"QUEUED"}
 
 
