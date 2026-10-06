@@ -47,3 +47,24 @@ def test_completion_splits_worker_hours_across_utc_days():
     assert "period_start=started_at.date()" in section
     assert "while period_start <= end_date:" in section
     assert "seconds_verified" in section
+
+
+def test_claim_compute_time_is_server_bounded():
+    section=API[API.index('@app.post("/jobs/{job_id}/claims")'):API.index('@app.get("/audit/job/{job_id}")')]
+    assert "elapsed_seconds=max(0,int((datetime.now(timezone.utc)-started_at).total_seconds()))" in section
+    assert "server_cpu_ceiling=min(86400, elapsed_seconds*cpu_threads)" in section
+    assert "accepted_cpu_seconds=min(body.cpu_seconds, server_cpu_ceiling)" in section
+
+
+def test_duplicate_claim_uses_savepoint_not_full_transaction_rollback():
+    section=API[API.index('@app.post("/jobs/{job_id}/claims")'):API.index('@app.get("/audit/job/{job_id}")')]
+    assert "with conn.transaction():" in section
+    assert "conn.rollback()" not in section
+    assert "worker_idempotency_store(cur, token_worker_id, request, payload, response)" in section
+
+
+def test_stale_assignment_recovery_is_audited():
+    section=API[API.index("def expire_stale_assignments"):API.index("def assignment_for_worker")]
+    assert "returning id,job_id,worker_id" in section
+    assert '"EXPIRED"' in section
+    assert '"timeout_seconds":ASSIGNMENT_TIMEOUT_SECONDS' in section
