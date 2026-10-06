@@ -1193,7 +1193,7 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                 return replay
             expire_stale_assignments(cur)
             cur.execute(
-                "select a.id,a.worker_id,a.status,j.status from job_assignments a "
+                "select a.id,a.worker_id,a.status,j.status,a.started_at from job_assignments a "
                 "join jobs j on j.id=a.job_id join workers w on w.id=a.worker_id "
                 "where a.id=%s and a.job_id=%s and w.id=%s for update",
                 (body.assignment_id, job_id, token_worker_id),
@@ -1206,15 +1206,49 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
             if assignment[3] not in ("QUEUED","RUNNING"): raise HTTPException(409,"Job is no longer accepting claims")
             if body.result_status == "VERIFIED":
                 raise HTTPException(403, "VERIFIED claims require a server-side challenge adapter.")
+            # CPU time is an accounting signal, not worker-authoritative proof.
+            # Bound it by server-observed wall time and the worker's declared
+            # thread capacity so a client cannot manufacture arbitrary compute.
+            started_at=assignment[4]
+            if not started_at:
+                raise HTTPException(409, "Assignment has no server start time")
+            elapsed_seconds=max(0,int((datetime.now(timezone.utc)-started_at).total_seconds()))
+            cur.execute("select coalesce(cpu_threads,1) from worker_capabilities where worker_id=%s", (token_worker_id,))
+            capability_row=cur.fetchone()
+            cpu_threads=max(1,int(capability_row[0] if capability_row else 1))
+            server_cpu_ceiling=min(86400, elapsed_seconds*cpu_threads)
+            accepted_cpu_seconds=min(body.cpu_seconds, server_cpu_ceiling)
+
             cid=uuid4()
+            duplicate=False
             try:
-                cur.execute("insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) values(%s,%s,%s,%s,%s,%s,now())",(cid,job_id,body.worker_id,body.candidate_hash,body.result_status,body.cpu_seconds))
+                # A savepoint keeps the surrounding idempotency/audit transaction
+                # alive when the database rejects a duplicate candidate.
+                with conn.transaction():
+                    cur.execute(
+                        "insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) "
+                        "values(%s,%s,%s,%s,%s,%s,now())",
+                        (cid,job_id,body.worker_id,body.candidate_hash,body.result_status,accepted_cpu_seconds),
+                    )
             except psycopg.errors.UniqueViolation:
-                conn.rollback()
-                return {"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
-            record_audit_event(cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,payload={"assignment_id":str(body.assignment_id),"candidate_hash":body.candidate_hash,"result_status":body.result_status})
+                duplicate=True
+
+            if duplicate:
+                response={"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
+                worker_idempotency_store(cur, token_worker_id, request, payload, response)
+                return response
+
+            record_audit_event(
+                cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,
+                payload={
+                    "assignment_id":str(body.assignment_id),
+                    "candidate_hash":body.candidate_hash,
+                    "result_status":body.result_status,
+                    "cpu_seconds":accepted_cpu_seconds,
+                },
+            )
             # Verification is intentionally performed only by a trusted adapter pipeline.
-            response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id)}
+            response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id),"cpu_seconds":accepted_cpu_seconds}
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
             return response
 
