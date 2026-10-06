@@ -37,7 +37,7 @@ if FRONTEND_ORIGIN:
         allow_origins=[FRONTEND_ORIGIN],
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
     )
 
 _RATE_WINDOW_SECONDS = 60
@@ -121,6 +121,8 @@ def account_id_from_auth(authorization: str = Header(default="")) -> UUID:
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "Bearer session required")
     try:
+        if not JWT_SECRET:
+            raise HTTPException(503, "JWT_SECRET is not configured")
         payload = jwt.decode(authorization[7:], JWT_SECRET, algorithms=["HS256"])
         return UUID(payload["sub"])
     except Exception:
@@ -207,8 +209,12 @@ class ClaimCreate(BaseModel):
 @app.put("/workers/{worker_id}/capabilities")
 def update_capabilities(worker_id: UUID, body: CapabilityUpdate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload=body.model_dump()
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             if not worker_owned(cur, worker_id, account_id, active_only=True):
                 raise HTTPException(404, "Worker not found")
             cur.execute(
@@ -217,8 +223,9 @@ def update_capabilities(worker_id: UUID, body: CapabilityUpdate, request: Reques
                 (worker_id,body.cpu_threads,body.memory_mb,json.dumps(body.adapter_types)),
             )
             record_audit_event(cur,"WORKER_CAPABILITIES_UPDATED","worker",worker_id,account_id,worker_id,payload=body.model_dump())
-    return {"worker_id":str(worker_id),"capabilities":body.model_dump()}
-
+            response={"worker_id":str(worker_id),"capabilities":body.model_dump()}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/assignments/{assignment_id}/checkpoint")
 def checkpoint(assignment_id: UUID, body: CheckpointCreate, request: Request, worker_id: UUID = Depends(worker_id_from_token)):
@@ -284,8 +291,12 @@ class ChallengeOfferCreate(BaseModel):
 @app.post("/creator/offers")
 def create_offer(body: ChallengeOfferCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload=body.model_dump()
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute("select creator_account_id,creator_status from challenge_creators where challenge_id=%s",(body.challenge_id,))
             creator=cur.fetchone()
             if not creator or creator[0] != account_id:
@@ -302,46 +313,62 @@ def create_offer(body: ChallengeOfferCreate, request: Request, account_id: UUID 
                 (oid,body.challenge_id,account_id,ch[0],body.estimated_difficulty,body.estimated_seconds,json.dumps(body.required_capabilities)),
             )
             record_audit_event(cur,"OFFER_CREATED","challenge_offer",oid,account_id,payload={"challenge_id":body.challenge_id})
-    return {"offer_id":str(oid),"status":"DRAFT"}
-
+            response={"offer_id":str(oid),"status":"DRAFT"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/creator/offers/{offer_id}/publish")
 def publish_offer(offer_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"offer_id":str(offer_id)}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute("update challenge_offers set status='PUBLISHED',published_at=now() where id=%s and creator_account_id=%s and status='DRAFT' returning challenge_id",(offer_id,account_id))
             row=cur.fetchone()
             if not row: raise HTTPException(409,"Offer cannot be published")
             record_audit_event(cur,"OFFER_PUBLISHED","challenge_offer",offer_id,account_id,payload={"challenge_id":row[0]})
-    return {"offer_id":str(offer_id),"status":"PUBLISHED"}
-
+            response={"offer_id":str(offer_id),"status":"PUBLISHED"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/admin/creators/{challenge_id}/approve")
 def approve_creator(challenge_id: str, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"challenge_id":challenge_id}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             require_owner(cur, account_id)
             cur.execute("update challenge_creators set creator_status='APPROVED',approved_at=now() where challenge_id=%s and creator_status='PENDING' returning creator_account_id",(challenge_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(409,"Creator is not pending")
             record_audit_event(cur,"CREATOR_APPROVED","challenge",challenge_id,account_id,payload={"creator_account_id":str(row[0]) if row[0] else None})
-    return {"challenge_id":challenge_id,"status":"APPROVED"}
-
+            response={"challenge_id":challenge_id,"status":"APPROVED"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/admin/challenges/{challenge_id}/pause")
 def pause_challenge(challenge_id: str, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"challenge_id":challenge_id}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             require_owner(cur, account_id)
             cur.execute("update challenge_registry set status='OPEN + UNFUNDED' where id=%s and status='OPEN + FUNDED' returning id",(challenge_id,))
             if not cur.fetchone(): raise HTTPException(409,"Challenge is not currently OPEN + FUNDED")
             cur.execute("update challenge_offers set status='PAUSED' where challenge_id=%s and status='PUBLISHED'",(challenge_id,))
             record_audit_event(cur,"CHALLENGE_PAUSED","challenge",challenge_id,account_id)
-    return {"challenge_id":challenge_id,"status":"PAUSED"}
-
+            response={"challenge_id":challenge_id,"status":"PAUSED"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.get("/marketplace/challenges")
 def marketplace():
@@ -359,8 +386,12 @@ def marketplace():
 @app.post("/creator/challenges")
 def creator_challenge(body: CreatorChallenge, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload=body.model_dump()
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute("select id from challenge_registry where id=%s",(body.challenge_id,))
             if not cur.fetchone(): raise HTTPException(404,"Challenge not found")
             cur.execute(
@@ -369,15 +400,19 @@ def creator_challenge(body: CreatorChallenge, request: Request, account_id: UUID
                 (body.challenge_id,account_id,json.dumps(body.terms)),
             )
             record_audit_event(cur,"CREATOR_REGISTERED","challenge",body.challenge_id,account_id,payload={"terms":body.terms})
-    return {"challenge_id":body.challenge_id,"creator_status":"PENDING"}
-
-
+            response={"challenge_id":body.challenge_id,"creator_status":"PENDING"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/jobs/{job_id}/schedule")
 def schedule_job(job_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"job_id":str(job_id)}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             cur.execute("""
                 select j.id,j.puzzle_id,j.status,c.challenge_type
                 from jobs j join challenge_registry c on c.id=j.puzzle_id
@@ -412,8 +447,9 @@ def schedule_job(job_id: UUID, request: Request, account_id: UUID = Depends(acco
                 (uuid4(),job_id,selected["id"],selected["score"],json.dumps({"strategy":"capability+reputation"})),
             )
             record_audit_event(cur,"SCHEDULER_DECISION","job",job_id,account_id,selected["id"],payload={"score":selected["score"]})
-    return {"job_id":str(job_id),"selected_worker_id":str(selected["id"]),"score":selected["score"]}
-
+            response={"job_id":str(job_id),"selected_worker_id":str(selected["id"]),"score":selected["score"]}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.get("/network")
 def network():
@@ -764,41 +800,56 @@ def admin_rewards(account_id: UUID = Depends(account_id_from_auth)):
 @app.post("/admin/rewards/{reward_id}/approve")
 def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"reward_id":str(reward_id)}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             require_owner(cur, account_id)
             cur.execute("update reward_events set settlement_status='APPROVED',approved_at=now() where id=%s and settlement_status='REVIEW' returning puzzle_id,account_id", (reward_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(409, "Reward is not in REVIEW")
             record_audit_event(cur,"REWARD_APPROVED","reward_event",reward_id,account_id,payload={"puzzle_id":row[0],"beneficiary_account":str(row[1])})
-    return {"status":"APPROVED","reward_id":str(reward_id)}
-
+            response={"status":"APPROVED","reward_id":str(reward_id)}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/admin/rewards/{reward_id}/void")
 def void_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"reward_id":str(reward_id)}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             require_owner(cur, account_id)
             cur.execute("update reward_events set settlement_status='VOID' where id=%s and settlement_status in ('REVIEW','APPROVED') returning puzzle_id", (reward_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(409, "Reward cannot be voided from its current state")
             record_audit_event(cur,"REWARD_VOID","reward_event",reward_id,account_id,payload={"puzzle_id":row[0]})
-    return {"status":"VOID","reward_id":str(reward_id)}
-
+            response={"status":"VOID","reward_id":str(reward_id)}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/admin/rewards/{reward_id}/settle")
 def settle_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"reward_id":str(reward_id)}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             require_owner(cur, account_id)
             cur.execute("update reward_events set settlement_status='SETTLED',settled_at=now() where id=%s and settlement_status='APPROVED' returning puzzle_id,account_id,worker_share_btc,platform_fee_btc", (reward_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(409, "Reward must be APPROVED before settlement")
             record_audit_event(cur,"REWARD_SETTLED","reward_event",reward_id,account_id,payload={"puzzle_id":row[0],"beneficiary_account":str(row[1]),"custody":"none"})
-    return {"status":"SETTLED","reward_id":str(reward_id),"custody":"non-custodial"}
-
+            response={"status":"SETTLED","reward_id":str(reward_id),"custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.get("/admin/community")
 def admin_community(account_id: UUID = Depends(account_id_from_auth)):
@@ -812,44 +863,64 @@ def admin_community(account_id: UUID = Depends(account_id_from_auth)):
 @app.post("/admin/community")
 def create_community_allocation(source_reward_event_id: UUID, amount_btc: float, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"source_reward_event_id":str(source_reward_event_id),"amount_btc":amount_btc}
     if amount_btc <= 0: raise HTTPException(400, "amount_btc must be positive")
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             require_owner(cur, account_id)
             cur.execute("select platform_fee_btc,account_id,puzzle_id,settlement_status from reward_events where id=%s for update", (source_reward_event_id,))
             row=cur.fetchone()
             if not row or row[3] != "SETTLED": raise HTTPException(409, "Source reward must be SETTLED")
-            if amount_btc > float(row[0]): raise HTTPException(400, "Allocation exceeds platform fee")
+            cur.execute("select coalesce(sum(amount_btc),0) from community_allocations where source_reward_event_id=%s and status <> 'CANCELLED'", (source_reward_event_id,))
+            allocated = cur.fetchone()[0]
+            remaining = row[0] - allocated
+            if Decimal(str(amount_btc)) > remaining:
+                raise HTTPException(400, "Allocation exceeds the remaining platform fee for this reward event")
             cur.execute("insert into community_allocations(id,source_reward_event_id,amount_btc) values(%s,%s,%s) returning id", (uuid4(),source_reward_event_id,amount_btc))
             alloc=cur.fetchone()[0]
             record_audit_event(cur,"COMMUNITY_ALLOCATION_CREATED","community_allocation",alloc,account_id,payload={"source_reward_event":str(source_reward_event_id),"amount_btc":amount_btc})
-    return {"id":str(alloc),"status":"MANUAL_REVIEW"}
-
+            response={"id":str(alloc),"status":"MANUAL_REVIEW"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/admin/community/{allocation_id}/approve")
 def approve_community(allocation_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"allocation_id":str(allocation_id)}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             require_owner(cur, account_id)
             cur.execute("update community_allocations set status='APPROVED',approved_at=now() where id=%s and status='MANUAL_REVIEW' returning amount_btc", (allocation_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(409, "Allocation is not in MANUAL_REVIEW")
             record_audit_event(cur,"COMMUNITY_ALLOCATION_APPROVED","community_allocation",allocation_id,account_id,payload={"amount_btc":row[0]})
-    return {"status":"APPROVED","id":str(allocation_id)}
-
+            response={"status":"APPROVED","id":str(allocation_id)}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/admin/community/{allocation_id}/distributed")
 def distribute_community(allocation_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
+    payload={"allocation_id":str(allocation_id)}
     with db() as conn:
         with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
             require_owner(cur, account_id)
             cur.execute("update community_allocations set status='DISTRIBUTED',distributed_at=now() where id=%s and status='APPROVED' returning amount_btc", (allocation_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(409, "Allocation must be APPROVED before distribution")
             record_audit_event(cur,"COMMUNITY_ALLOCATION_DISTRIBUTED","community_allocation",allocation_id,account_id,payload={"amount_btc":row[0],"custody":"none"})
-    return {"status":"DISTRIBUTED","id":str(allocation_id),"custody":"non-custodial"}
+            response={"status":"DISTRIBUTED","id":str(allocation_id),"custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
 @app.post("/jobs")
 def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
