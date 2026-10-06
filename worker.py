@@ -84,6 +84,7 @@ def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory
     cursor = int(start_cursor)
     max_candidates = int(max_candidates)
     max_memory_bytes = max(32, int(max_memory_mb)) * 1024 * 1024
+    checkpoint_end = start_cursor + max_candidates if max_candidates else (2**63 - 1)
     started = time.monotonic()
     last_checkpoint = cursor
     last_checkpoint_at = started
@@ -112,7 +113,7 @@ def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory
 
         now = time.monotonic()
         if checkpoint_callback and (now - last_checkpoint_at >= 30):
-            checkpoint_callback(start_cursor, cursor, cursor, str(cursor))
+            checkpoint_callback(start_cursor, checkpoint_end, cursor, str(cursor))
             last_checkpoint = cursor
             last_checkpoint_at = now
 
