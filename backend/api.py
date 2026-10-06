@@ -372,7 +372,7 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
 
 
 @app.post("/jobs/{job_id}/claims")
-def claim(job_id: UUID, body: ClaimCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     with db() as conn:
         with conn.cursor() as cur:
@@ -381,11 +381,12 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, account_id: UUID = 
                 "select a.id,a.worker_id,a.status,j.status from job_assignments a "
                 "join jobs j on j.id=a.job_id join workers w on w.id=a.worker_id "
                 "where a.id=%s and a.job_id=%s and w.account_id=%s for update",
-                (body.assignment_id, job_id, account_id),
+                (body.assignment_id, job_id, token_worker_id),
             )
             assignment = cur.fetchone()
             if not assignment: raise HTTPException(404,"Assignment not found")
-            if assignment[1] != body.worker_id: raise HTTPException(400,"Worker does not match assignment")
+            if token_worker_id != body.worker_id or assignment[1] != token_worker_id:
+                raise HTTPException(403,"Worker token does not match claim worker")
             if assignment[2] not in ("ASSIGNED","RUNNING","COMPLETED"): raise HTTPException(409,"Assignment is no longer claimable")
             cid=uuid4()
             try:
