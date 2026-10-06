@@ -1014,7 +1014,7 @@ def rotate_worker(worker_id: UUID, request: Request, account_id: UUID = Depends(
                 return replay
             cur.execute("update workers set token_hash=%s,last_seen_at=now() where id=%s and status='ACTIVE'", (token_hash,worker_id))
             if cur.rowcount != 1: raise HTTPException(409, "Worker is not active")
-            record_audit_event(cur,"WORKER_TOKEN_ROTATED","worker",worker_id,account_id,worker_id,payload={"token_storage":"hash_only"})
+            record_audit_event(cur,"WORKER_TOKEN_ROTATED","worker",worker_id,account_id,worker_id,payload={"token_storage":"digest_only"})
             response = {"worker_id":str(worker_id),"worker_token":token,"storage":"memory_only"}
             idempotency_store(cur, account_id, request, payload, response)
     return response
