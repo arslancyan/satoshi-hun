@@ -21,7 +21,8 @@ create table if not exists workers (
   status text not null default 'ACTIVE'
     check (status in ('ACTIVE','PAUSED','REVOKED')),
   registered_at timestamptz not null default now(),
-  last_seen_at timestamptz
+  last_seen_at timestamptz,
+  token_hash text unique
 );
 
 create table if not exists jobs (
