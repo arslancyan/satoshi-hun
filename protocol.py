@@ -10,6 +10,8 @@ def normalize(p):
     q["balance_btc"]=max(0.0,float(q.get("balance_btc",0) or 0))
     q["status"]=q.get("status") if q.get("status") in STATUSES else "UNKNOWN"
     q["rules"]=str(q.get("rules",""))
+    q["provenance"]=q.get("provenance")
+    q["verification"]=q.get("verification")
     return q
 
 def classify(p):
@@ -19,7 +21,7 @@ def classify(p):
     return p["status"]
 
 def eligible(p):
-    return classify(p)=="OPEN + FUNDED" and p.get("rules")=="public-reward-challenge"
+    return (classify(p)=="OPEN + FUNDED" and p.get("rules")=="public-reward-challenge" and bool(p.get("provenance")) and bool(p.get("verification")) )
 
 def make_job(p):
     p=normalize(p)
