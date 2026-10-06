@@ -1,5 +1,6 @@
 from economy import split_reward, validate_reward_event
 from verifier import verify_candidate_hash
+from challenge_adapters.peter_todd_hash_collision import ADAPTER as PeterToddHashCollisionAdapter
 
 def main():
     record={"id":"STAGING-HASH-001","type":"hash-commitment","reward_btc":0.01,"balance_btc":0.01,"status":"OPEN + FUNDED","rules":"public-reward-challenge","provenance":{"url":"https://example.com/challenge","source_id":"STAGING-HASH-001"},"verification":{"method":"hash-commitment","source_id":"STAGING-HASH-001","fingerprint":"staging","expected_candidate_hash":"abc123"}}
@@ -7,6 +8,6 @@ def main():
     if not verification["verified"]: raise SystemExit("FAIL: verifier rejected staging candidate")
     split=split_reward(record["reward_btc"])
     if not validate_reward_event({"gross_reward_btc":split["gross"],"worker_share_btc":split["worker_share"],"platform_fee_btc":split["platform_fee"]}): raise SystemExit("FAIL: reward ledger split is invalid")
-    print("PASS: challenge -> verifier -> reward accounting contract")
+    real_record={"id":"peter-todd-hash-collision-bounties","type":"hash-collision","reward_btc":0.59364885,"balance_btc":0.59364885,"status":"OPEN + FUNDED","rules":"public-reward-challenge","provenance":{"url":"https://github.com/floflo777/open-crypto-puzzles","source_id":"peter-todd-hash-collision-bounties","checked_at":"2026-10-06"},"verification":{"method":"published-hash-collision-rule","source_id":"peter-todd-hash-collision-bounties","checked_at":"2026-10-06","fingerprint":"four-live-escrows-public-record"}}\n    real=PeterToddHashCollisionAdapter.verify(real_record,"sha256:00:01")\n    if real: raise SystemExit("FAIL: invalid public collision candidate was accepted")\n    print("PASS: public challenge -> verifier -> reward accounting contract")
 
 if __name__ == "__main__": main()
