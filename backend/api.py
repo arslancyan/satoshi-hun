@@ -273,6 +273,76 @@ def audit_explorer(limit: int = 100):
     return {"events":[dict(zip(keys,r)) for r in rows]}
 
 
+
+class ChallengeOfferCreate(BaseModel):
+    challenge_id: str = Field(min_length=1, max_length=128)
+    estimated_difficulty: float | None = Field(default=None, ge=0)
+    estimated_seconds: int | None = Field(default=None, ge=0)
+    required_capabilities: dict = Field(default_factory=dict)
+
+
+@app.post("/creator/offers")
+def create_offer(body: ChallengeOfferCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select creator_account_id,creator_status from challenge_creators where challenge_id=%s",(body.challenge_id,))
+            creator=cur.fetchone()
+            if not creator or creator[0] != account_id:
+                raise HTTPException(403,"Creator ownership required")
+            if creator[1] != "APPROVED":
+                raise HTTPException(409,"Creator must be approved before publishing")
+            cur.execute("select reward_btc from challenge_registry where id=%s and status='OPEN + FUNDED'",(body.challenge_id,))
+            ch=cur.fetchone()
+            if not ch: raise HTTPException(409,"Challenge must be OPEN + FUNDED")
+            oid=uuid4()
+            cur.execute(
+                "insert into challenge_offers(id,challenge_id,creator_account_id,reward_btc,estimated_difficulty,estimated_seconds,required_capabilities) "
+                "values(%s,%s,%s,%s,%s,%s,%s::jsonb)",
+                (oid,body.challenge_id,account_id,ch[0],body.estimated_difficulty,body.estimated_seconds,json.dumps(body.required_capabilities)),
+            )
+            record_audit_event(cur,"OFFER_CREATED","challenge_offer",oid,account_id,payload={"challenge_id":body.challenge_id})
+    return {"offer_id":str(oid),"status":"DRAFT"}
+
+
+@app.post("/creator/offers/{offer_id}/publish")
+def publish_offer(offer_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("update challenge_offers set status='PUBLISHED',published_at=now() where id=%s and creator_account_id=%s and status='DRAFT' returning challenge_id",(offer_id,account_id))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409,"Offer cannot be published")
+            record_audit_event(cur,"OFFER_PUBLISHED","challenge_offer",offer_id,account_id,payload={"challenge_id":row[0]})
+    return {"offer_id":str(offer_id),"status":"PUBLISHED"}
+
+
+@app.post("/admin/creators/{challenge_id}/approve")
+def approve_creator(challenge_id: str, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("update challenge_creators set creator_status='APPROVED',approved_at=now() where challenge_id=%s and creator_status='PENDING' returning creator_account_id",(challenge_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409,"Creator is not pending")
+            record_audit_event(cur,"CREATOR_APPROVED","challenge",challenge_id,account_id,payload={"creator_account_id":str(row[0]) if row[0] else None})
+    return {"challenge_id":challenge_id,"status":"APPROVED"}
+
+
+@app.post("/admin/challenges/{challenge_id}/pause")
+def pause_challenge(challenge_id: str, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("update challenge_registry set status='OPEN + UNFUNDED' where id=%s and status='OPEN + FUNDED' returning id",(challenge_id,))
+            if not cur.fetchone(): raise HTTPException(409,"Challenge is not currently OPEN + FUNDED")
+            cur.execute("update challenge_offers set status='PAUSED' where challenge_id=%s and status='PUBLISHED'",(challenge_id,))
+            record_audit_event(cur,"CHALLENGE_PAUSED","challenge",challenge_id,account_id)
+    return {"challenge_id":challenge_id,"status":"PAUSED"}
+
+
 @app.get("/marketplace/challenges")
 def marketplace():
     with db() as conn:
