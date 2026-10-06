@@ -52,3 +52,17 @@ def test_adapter_requires_concrete_type():
 
     with pytest.raises(ValueError, match="concrete"):
         register_adapter(EmptyAdapter())
+
+
+def test_funded_status_is_required_for_verification():
+    record = _record()
+    record["status"] = "OPEN + UNFUNDED"
+    result = verify_candidate_hash(record, "abc123")
+    assert result["verified"] is False
+
+
+def test_missing_provenance_is_not_solver_eligible():
+    record = _record()
+    record["provenance"] = {}
+    result = verify_candidate_hash(record, "abc123")
+    assert result["verified"] is False
