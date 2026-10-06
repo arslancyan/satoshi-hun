@@ -1505,6 +1505,34 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
     return response
 
 
+@app.post("/assignments/{assignment_id}/stop")
+def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    """Stop the account-owned public puzzle assignment and release the job back to QUEUED."""
+    payload={"assignment_id":str(assignment_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            expire_stale_assignments(cur)
+            row=assignment_for_account(cur,assignment_id,account_id)
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3] not in ("ASSIGNED","RUNNING"):
+                raise HTTPException(409,f"Assignment is {row[3]}")
+            now=datetime.now(timezone.utc)
+            cur.execute(
+                "update job_assignments set status='PAUSED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
+                (assignment_id,),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(409,"Assignment changed before stop")
+            cur.execute(
+                """update jobs set status='QUEUED',completed_at=null
+                   where id=%s and status in ('QUEUED','RUNNING')
+                     and not exists (select 1 from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING'))""",
+                (row[1],row[1]),
+            )
+            record_audit_event(cur,"PAUSED","assignment",assignment_id,account_id,row[2],payload={**payload,"reason":"account_requested"})
+            response={"assignment_id":str(assignment_id),"status":"PAUSED","stopped_at":now}
+    return response
+
 @app.post("/assignments/{assignment_id}/heartbeat")
 def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
