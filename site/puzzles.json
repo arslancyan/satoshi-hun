@@ -1,7 +1,7 @@
 {
   "schema_version": 4,
   "source": "local-demo",
-  "notice": "Demo records only. Replace with verified public challenge records before production.",
+  "notice": "Demo records only. Reward funding is currently PAUSED. These records are UI/testing examples and are not live funded opportunities.",
   "puzzles": [
     {
       "id": "135",
@@ -17,9 +17,10 @@
         "difficulty": "Medium",
         "estimated": "Depends on candidate space",
         "verification": "Published challenge verification rule",
-        "eligibility": "OPEN + FUNDED + verified provenance",
+        "eligibility": "PAUSED — no live funding available",
         "progress": 0
-      }
+      },
+      "funding_state": "PAUSED"
     },
     {
       "id": "142",
@@ -35,9 +36,10 @@
         "difficulty": "Medium",
         "estimated": "Depends on challenge scope",
         "verification": "Published challenge verification rule",
-        "eligibility": "OPEN + FUNDED + verified provenance",
+        "eligibility": "PAUSED — no live funding available",
         "progress": 0
-      }
+      },
+      "funding_state": "PAUSED"
     },
     {
       "id": "151",
@@ -53,9 +55,10 @@
         "difficulty": "Low–Medium",
         "estimated": "Depends on challenge scope",
         "verification": "Published challenge verification rule",
-        "eligibility": "OPEN + FUNDED + verified provenance",
+        "eligibility": "PAUSED — no live funding available",
         "progress": 0
-      }
+      },
+      "funding_state": "PAUSED"
     },
     {
       "id": "118",
@@ -71,9 +74,10 @@
         "difficulty": "—",
         "estimated": "Closed",
         "verification": "Demo only",
-        "eligibility": "Not available",
+        "eligibility": "PAUSED — no live funding available",
         "progress": 100
-      }
+      },
+      "funding_state": "PAUSED"
     },
     {
       "id": "109",
@@ -89,9 +93,10 @@
         "difficulty": "—",
         "estimated": "Closed",
         "verification": "Demo only",
-        "eligibility": "Not available",
+        "eligibility": "PAUSED — no live funding available",
         "progress": 100
-      }
+      },
+      "funding_state": "PAUSED"
     },
     {
       "id": "101",
@@ -107,9 +112,10 @@
         "difficulty": "Unknown",
         "estimated": "Unknown",
         "verification": "Funding not verified",
-        "eligibility": "Not eligible until funded + verified",
+        "eligibility": "PAUSED — no live funding available",
         "progress": 0
-      }
+      },
+      "funding_state": "PAUSED"
     },
     {
       "id": "099",
@@ -125,9 +131,11 @@
         "difficulty": "Unknown",
         "estimated": "Unknown",
         "verification": "Unverified",
-        "eligibility": "Not eligible",
+        "eligibility": "PAUSED — no live funding available",
         "progress": 0
-      }
+      },
+      "funding_state": "PAUSED"
     }
-  ]
+  ],
+  "verified": false
 }
