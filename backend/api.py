@@ -539,6 +539,8 @@ def marketplace(account_id: UUID = Depends(account_id_from_auth)):
                    from challenge_registry
                    where status='OPEN + FUNDED'
                      and balance_btc > 0
+                     and funding_match = true
+                     and verification_stale = false
                      and coalesce((payout->>'permissionless'),'false')='true'
                      and coalesce((payout->>'automatic_chain_claim'),'false')='true'
                    order by balance_btc desc, updated_at desc, id asc
@@ -585,6 +587,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             cur.execute(
                 """select id,status,balance_btc,payout from challenge_registry
                    where id=%s and status='OPEN + FUNDED' and balance_btc>0
+                     and funding_match=true and verification_stale=false
                    for update""",(challenge_id,))
             challenge=cur.fetchone()
             if not challenge: raise HTTPException(409,"Challenge is not live, funded, or runnable")
@@ -1707,7 +1710,8 @@ def scheduler_recommendations(limit: int = 10):
                 "from jobs j join challenge_registry c on c.id=j.puzzle_id "
                 "left join lateral (select estimated_seconds,estimated_difficulty from challenge_offers "
                 "where challenge_id=c.id and status='PUBLISHED' order by published_at desc nulls last,created_at desc limit 1) o on true "
-                "where j.scope='public-reward-challenge' and j.status='QUEUED' and c.status='OPEN + FUNDED' and c.balance_btc > 0 "
+                "where j.scope='public-reward-challenge' and j.status='QUEUED' and c.status='OPEN + FUNDED' and c.balance_btc > 0
+                   and c.funding_match=true and c.verification_stale=false "
                 "order by c.balance_btc desc limit %s", (limit * 3,))
             rows = cur.fetchall()
             recommendations = []
