@@ -1377,10 +1377,10 @@ def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(accoun
                 )
                 event = build_reward_event(account_id, job[1], job[4])
                 cur.execute(
-                    "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status) "
-                    "values(%s,%s,%s,%s,%s,%s,'REVIEW') "
+                    "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id) "
+                    "values(%s,%s,%s,%s,%s,%s,'REVIEW',%s) "
                     "on conflict (puzzle_id,account_id) where settlement_status <> 'VOID' do nothing",
-                    (uuid4(), account_id, job[1], event["gross_reward_btc"], event["worker_share_btc"], event["platform_fee_btc"]),
+                    (uuid4(), account_id, job[1], event["gross_reward_btc"], event["worker_share_btc"], event["platform_fee_btc"], claim_id),
                 )
                 record_audit_event(cur,"VERIFIED","job",job_id,account_id,worker_id,{"candidate_hash":candidate_hash,"reward_status":"REVIEW"})
                 return {"verified":True,"claim_id":str(claim_id),"candidate_hash":candidate_hash,"reward_status":"REVIEW"}
