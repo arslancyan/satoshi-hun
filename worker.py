@@ -36,7 +36,7 @@ def api_json(path, method="GET", payload=None):
         data=data,
         method=method,
         headers={
-            "Authorization": "Bearer " + API_TOKEN,
+            "Authorization": "Worker " + API_TOKEN,
             "Content-Type": "application/json",
         },
     )
