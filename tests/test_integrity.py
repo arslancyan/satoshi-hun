@@ -60,3 +60,23 @@ def test_verified_result_pipeline_requires_registered_adapter():
     result = verify_candidate(record, "candidate")
     assert result["verified"] is False
     assert "No challenge-specific verifier" in result["reason"]
+
+def test_hash_commitment_adapter_verifies_only_exact_hash():
+    from verifier import verify_candidate_hash
+    record = {
+        "id": "hash-test",
+        "type": "hash-commitment",
+        "status": "OPEN + FUNDED",
+        "balance_btc": 1,
+        "reward_btc": 1,
+        "rules": "public-reward-challenge",
+        "provenance": {"url": "https://example.com/challenge", "checked_at": "2026-01-01T00:00:00Z"},
+        "verification": {
+            "method": "published hash commitment",
+            "checked_at": "2026-01-01T00:00:00Z",
+            "fingerprint": "abc",
+            "expected_candidate_hash": "deadbeef",
+        },
+    }
+    assert verify_candidate_hash(record, "deadbeef")["verified"] is True
+    assert verify_candidate_hash(record, "cafebabe")["verified"] is False
