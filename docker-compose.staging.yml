@@ -22,6 +22,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+  db-init:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://satoshi:change-me@db:5432/satoshi_hunt
+    command: ["python", "tools/init_db.py"]
+    depends_on:
+      db:
+        condition: service_healthy
   api:
     build: .
     environment:
@@ -35,8 +43,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 volumes:
