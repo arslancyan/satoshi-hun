@@ -28,3 +28,15 @@ def test_ingestion_handles_concurrent_job_creation():
     section=API[API.index('@app.post("/internal/challenges")'):API.index('@app.get("/admin/rewards")')]
     assert "on conflict (puzzle_id,scope) do nothing returning id" in section
     assert "select id from jobs where puzzle_id=%s and scope='public-reward-challenge' " in section
+
+
+def test_checkpoint_cursor_is_monotonic():
+    section=API[API.index('@app.post("/assignments/{assignment_id}/checkpoint")'):API.index('@app.post("/assignments/{assignment_id}/resume")')]
+    assert "Checkpoint cursor must advance monotonically" in section
+    assert "Checkpoint range changed for this assignment" in section
+    assert "order by created_at desc,id desc limit 1 for update" in section
+
+def test_resume_requires_active_assignment():
+    section=API[API.index('@app.post("/assignments/{assignment_id}/resume")'):API.index('@app.get("/audit/explorer")')]
+    assert 'row[1] not in ("ASSIGNED","RUNNING")' in section
+    assert "Assignment is no longer resumable" in section
