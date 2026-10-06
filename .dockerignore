@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+backups
+secrets
+credentials
+wallet
+__pycache__
+*.pyc
+*.dump
+site/node_modules
