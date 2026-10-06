@@ -23,6 +23,8 @@ services:
         sync: false
       - key: SESSION_TTL_SECONDS
         value: "3600"
+      - key: PASSWORD_PBKDF2_ITERATIONS
+        value: "310000"
       - key: ASSIGNMENT_TIMEOUT_SECONDS
         value: "120"
       - key: MAX_ACTIVE_ASSIGNMENTS
