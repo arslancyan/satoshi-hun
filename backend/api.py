@@ -232,11 +232,11 @@ def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
 
 
 @app.get("/workers/{worker_id}/assignments")
-def worker_assignments(worker_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
+def worker_assignments(worker_id: UUID, token_worker_id: UUID = Depends(worker_id_from_token)):
     with db() as conn:
         with conn.cursor() as cur:
-            if not worker_owned(cur, worker_id, account_id):
-                raise HTTPException(404, "Worker not found")
+            if token_worker_id != worker_id:
+                raise HTTPException(403, "Worker token does not match worker")
             cur.execute(
                 "select a.id,a.job_id,j.puzzle_id,a.status,a.assigned_at,a.started_at,"
                 "a.completed_at,a.last_heartbeat_at,a.verified_seconds "
@@ -315,19 +315,24 @@ def expire_stale_assignments(cur):
         )
 
 
+def assignment_for_worker(cur, assignment_id: UUID, worker_id: UUID):
+    cur.execute("select id,job_id,worker_id,status,started_at from job_assignments where id=%s and worker_id=%s", (assignment_id, worker_id))
+    return cur.fetchone()
+
+
 def assignment_for_account(cur, assignment_id: UUID, account_id: UUID):
     cur.execute("select a.id,a.job_id,a.worker_id,a.status,j.status from job_assignments a join workers w on w.id=a.worker_id join jobs j on j.id=a.job_id where a.id=%s and w.account_id=%s for update", (assignment_id,account_id))
     return cur.fetchone()
 
 
 @app.post("/assignments/{assignment_id}/start")
-def start_assignment(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     now = datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
             expire_stale_assignments(cur)
-            row=assignment_for_account(cur,assignment_id,account_id)
+            row=assignment_for_worker(cur,assignment_id,token_worker_id)
             if not row: raise HTTPException(404,"Assignment not found")
             if row[3]!="ASSIGNED": raise HTTPException(409,f"Assignment is {row[3]}")
             cur.execute("update job_assignments set status='RUNNING',started_at=%s,last_heartbeat_at=%s where id=%s",(now,now,assignment_id))
@@ -336,7 +341,7 @@ def start_assignment(assignment_id: UUID, request: Request, account_id: UUID = D
 
 
 @app.post("/assignments/{assignment_id}/heartbeat")
-def assignment_heartbeat(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     now=datetime.now(timezone.utc)
     with db() as conn:
@@ -350,7 +355,7 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, account_id: UUID
 
 
 @app.post("/assignments/{assignment_id}/complete")
-def complete_assignment(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     now=datetime.now(timezone.utc)
     with db() as conn:
