@@ -11,8 +11,8 @@ def _record(challenge_type="hash-commitment", expected="abc123"):
         "balance_btc": 0.01,
         "status": "OPEN + FUNDED",
         "rules": "public-reward-challenge",
-        "provenance": {"url": "https://example.com/challenge", "source_id": "public-1"},
-        "verification": {"method": "hash-commitment", "expected_candidate_hash": expected, "funding_match": True, "verification_stale": False},
+        "provenance": {"url": "https://example.com/challenge", "source_id": "public-1", "checked_at": "2026-10-06T00:00:00Z"},
+        "verification": {"method": "hash-commitment", "source_id": "public-1", "checked_at": "2026-10-06T00:00:00Z", "fingerprint": "staging", "expected_candidate_hash": expected, "funding_match": True, "verification_stale": False},
     }
 
 
