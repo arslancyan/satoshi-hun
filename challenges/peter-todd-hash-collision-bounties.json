@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "peter-todd-hash-collision-bounties",
+  "title": "Peter Todd Hash Collision Bounties",
+  "challenge_type": "hash-collision",
+  "rules": "public-reward-challenge",
+  "status": "OPEN + FUNDED",
+  "reward_btc": 0.59364885,
+  "balance_btc": 0.59364885,
+  "eligibility": "RESEARCH BREAKTHROUGH — not a routine compute job",
+  "provenance": {
+    "url": "https://github.com/floflo777/open-crypto-puzzles",
+    "source_id": "peter-todd-hash-collision-bounties-0-59btc",
+    "checked_at": "2026-10-06"
+  },
+  "verification": {
+    "method": "published hash-collision rule; verify two distinct <=520-byte messages against named hash",
+    "source_id": "peter-todd-hash-collision-bounties-0-59btc",
+    "checked_at": "2026-10-06",
+    "fingerprint": "four-live-escrows-public-record"
+  },
+  "escrow_addresses": [
+    "35Snmmy3uhaer2gTboc81ayCip4m9DT4ko",
+    "3KyiQEGqqdb4nqfhUzGKN6KPhXmQsLNpay",
+    "39VXyuoc6SXYKp9TcAhoiN1mb4ns6z3Yu6",
+    "3DUQQvz4t57Jy7jxE86kyFcNpKtURNf1VW"
+  ],
+  "worker_policy": "Do not treat this research bounty as ordinary profitable brute-force work; only run an independently reviewed bounded research adapter."
+}
