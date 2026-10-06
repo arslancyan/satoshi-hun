@@ -6,4 +6,4 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt \
     && python -c "import psycopg; print(psycopg.__version__)"
 COPY . /app
 EXPOSE 8000
-CMD ["uvicorn","backend.api:app","--host","0.0.0.0","--port","8000"]
+CMD ["sh","-c","python /app/tools/runtime_patch.py && exec uvicorn backend.api:app --host 0.0.0.0 --port 8000"]
