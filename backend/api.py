@@ -1144,9 +1144,9 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                 return {"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
             record_audit_event(cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,payload={"assignment_id":str(body.assignment_id),"candidate_hash":body.candidate_hash,"result_status":body.result_status})
             # Verification is intentionally performed only by a trusted adapter pipeline.
-    response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id)}
+            response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id)}
             worker_idempotency_store(cur, token_worker_id, request, payload, response)
-    return response
+            return response
 
 
 @app.get("/audit/job/{job_id}")
