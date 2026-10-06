@@ -19,6 +19,21 @@ def capability_score(worker, required=None):
     return round(score, 6)
 
 
+def economic_priority(reward_btc, estimated_seconds, success_probability=0.01, reliability=1.0):
+    """Rank funded public work by conservative expected reward per worker-hour.
+
+    The score is a scheduling signal, not a promise of earnings. Inputs are
+    bounded so bad estimates cannot create infinite priority.
+    """
+    reward = max(0.0, float(reward_btc))
+    seconds = max(1.0, float(estimated_seconds))
+    probability = min(1.0, max(0.0, float(success_probability)))
+    reliability = min(1.0, max(0.0, float(reliability)))
+    expected_reward = reward * probability
+    worker_hours = seconds / 3600.0
+    return round((expected_reward / worker_hours) * reliability, 12)
+
+
 def adaptive_ranges(start, end, workers):
     if start < 0 or end <= start or not workers:
         raise ValueError("invalid search space or workers")
