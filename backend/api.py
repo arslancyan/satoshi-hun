@@ -180,6 +180,48 @@ class ClaimCreate(BaseModel):
     cpu_seconds: int = Field(default=0, ge=0, le=86400)
 
 
+@app.get("/network")
+def network():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from workers where status='ACTIVE'")
+            workers=cur.fetchone()[0]
+            cur.execute("select count(*) from workers where status='ACTIVE' and last_seen_at > now() - interval '2 minutes'")
+            online=cur.fetchone()[0]
+            cur.execute("select count(*) from jobs where status in ('QUEUED','RUNNING')")
+            active_jobs=cur.fetchone()[0]
+            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours")
+            seconds=cur.fetchone()[0]
+            cur.execute("select count(*) from jobs where status='VERIFIED'")
+            verified=cur.fetchone()[0]
+    return {
+        "workers": workers,
+        "online_workers": online,
+        "active_jobs": active_jobs,
+        "contribution_hours": round(float(seconds)/3600, 2),
+        "verified_jobs": verified,
+        "source": "postgresql",
+    }
+
+
+@app.get("/reputation")
+def reputation(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select
+                  count(*) filter (where c.result_status='VERIFIED'),
+                  count(*) filter (where c.result_status='REJECTED'),
+                  coalesce(sum(c.cpu_seconds),0)
+                from work_claims c join workers w on w.id=c.worker_id
+                where w.account_id=%s
+            """,(account_id,))
+            verified,rejected,cpu=cur.fetchone()
+    total=verified+rejected
+    score=100.0 if total==0 else round((verified/total)*100,2)
+    return {"verified_claims":verified,"rejected_claims":rejected,"cpu_seconds":cpu,"reliability_score":score}
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "service": "satoshi-hunt-api", "custody": "non-custodial"}
