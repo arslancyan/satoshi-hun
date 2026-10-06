@@ -29,7 +29,7 @@ def test_verifier_requires_provenance_and_verification():
     }
     assert verifier_eligible(base) is False
     base["provenance"] = {"url": "https://example.com", "checked_at": "2026-01-01T00:00:00Z"}
-    base["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc"}
+    base["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False}
     assert verifier_eligible(base) is True
 
 
@@ -42,7 +42,7 @@ def test_protocol_requires_provenance_and_verification():
     }
     assert protocol_eligible(record) is False
     record["provenance"] = {"url": "https://example.com", "checked_at": "2026-01-01T00:00:00Z"}
-    record["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc"}
+    record["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False}
     assert protocol_eligible(record) is True
 
 def test_verified_result_pipeline_requires_registered_adapter():
@@ -76,6 +76,8 @@ def test_hash_commitment_adapter_verifies_only_exact_hash():
             "checked_at": "2026-01-01T00:00:00Z",
             "fingerprint": "abc",
             "expected_candidate_hash": "deadbeef",
+            "funding_match": True,
+            "verification_stale": False,
         },
     }
     assert verify_candidate_hash(record, "deadbeef")["verified"] is True
