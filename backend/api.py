@@ -530,16 +530,97 @@ def pause_challenge(challenge_id: str, request: Request, account_id: UUID = Depe
             return response
 
 @app.get("/marketplace/challenges")
-def marketplace():
+def marketplace(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "select o.id,o.challenge_id,c.title,c.challenge_type,o.reward_btc,o.estimated_difficulty,o.estimated_seconds,o.required_capabilities,o.status,o.published_at "
-                "from challenge_offers o join challenge_registry c on c.id=o.challenge_id "
-                "where o.status='PUBLISHED' order by o.published_at desc limit 100"
+                """select id,title,challenge_type,reward_btc,balance_btc,status,provenance,
+                          verification,payout,source_adapter,live_checked_at,live_verification
+                   from challenge_registry
+                   where status='OPEN + FUNDED'
+                     and balance_btc > 0
+                     and coalesce((payout->>'permissionless'),'false')='true'
+                     and coalesce((payout->>'automatic_chain_claim'),'false')='true'
+                   order by balance_btc desc, updated_at desc, id asc
+                   limit 100"""
             )
-            keys=["id","challenge_id","title","challenge_type","reward_btc","estimated_difficulty","estimated_seconds","required_capabilities","status","published_at"]
-            return {"offers":[dict(zip(keys,r)) for r in cur.fetchall()]}
+            keys=["challenge_id","title","challenge_type","reward_btc","balance_btc","status",
+                  "provenance","verification","payout","source_adapter","live_checked_at","live_verification"]
+            rows=[dict(zip(keys,x)) for x in cur.fetchall()]
+            cur.execute("select challenge_id from challenge_selections where account_id=%s order by selected_at desc",(account_id,))
+            selected={x[0] for x in cur.fetchall()}
+            for row in rows:
+                row["selected"]=row["challenge_id"] in selected
+            return {"challenges":rows,"offers":rows}
+
+
+@app.get("/marketplace/challenges/{challenge_id}")
+def marketplace_detail(challenge_id: str, account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select id,title,challenge_type,reward_btc,balance_btc,status,provenance,
+                          verification,payout,source_adapter,live_checked_at,live_verification
+                   from challenge_registry where id=%s""",(challenge_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"Challenge not found")
+            if row[5]!="OPEN + FUNDED" or row[4] <= 0:
+                raise HTTPException(409,"Challenge is not currently live and funded")
+            keys=["challenge_id","title","challenge_type","reward_btc","balance_btc","status",
+                  "provenance","verification","payout","source_adapter","live_checked_at","live_verification"]
+            cur.execute("select 1 from challenge_selections where account_id=%s and challenge_id=%s",(account_id,challenge_id))
+            selected=cur.fetchone() is not None
+            return {**dict(zip(keys,row)),"selected":selected}
+
+
+@app.post("/marketplace/challenges/{challenge_id}/run")
+def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request: Request,
+                              account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request,"write")
+    payload={"challenge_id":challenge_id,"worker_id":str(body.worker_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur,account_id,request,payload)
+            if replay is not None: return replay
+            cur.execute(
+                """select id,status,balance_btc,payout from challenge_registry
+                   where id=%s and status='OPEN + FUNDED' and balance_btc>0
+                   for update""",(challenge_id,))
+            challenge=cur.fetchone()
+            if not challenge: raise HTTPException(409,"Challenge is not live, funded, or runnable")
+            payout=challenge[3] or {}
+            if payout.get("permissionless") is not True or payout.get("automatic_chain_claim") is not True:
+                raise HTTPException(409,"Challenge payout mechanism is not independently verified")
+            cur.execute("select id from workers where id=%s and account_id=%s and status='ACTIVE'",(body.worker_id,account_id))
+            if not cur.fetchone(): raise HTTPException(400,"Selected worker is not active or does not belong to this account")
+            cur.execute(
+                "insert into challenge_selections(account_id,challenge_id) values(%s,%s) "
+                "on conflict(account_id,challenge_id) do update set selected_at=now()",
+                (account_id,challenge_id),
+            )
+            cur.execute(
+                "select id,status from jobs where puzzle_id=%s and scope='public-reward-challenge' for update",
+                (challenge_id,),
+            )
+            job=cur.fetchone()
+            if job:
+                job_id,job_status=job
+                if job_status in ("COMPLETED","REJECTED","EXPIRED"):
+                    cur.execute("update jobs set status='QUEUED',completed_at=null where id=%s",(job_id,))
+            else:
+                job_id=uuid4()
+                cur.execute("insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED')",(job_id,challenge_id))
+            cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')",(job_id,))
+            if cur.fetchone(): raise HTTPException(409,"Challenge is already being run by another worker")
+            capacity=economic_capacity(cur,job_id)
+            if not capacity["allowed"]: raise HTTPException(429,f"Allocation paused: {capacity['reason']}")
+            aid=uuid4()
+            cur.execute("insert into job_assignments(id,job_id,worker_id,status) values(%s,%s,%s,'ASSIGNED')",(aid,job_id,body.worker_id))
+            record_audit_event(cur,"CHALLENGE_SELECTED","challenge",challenge_id,account_id=account_id,worker_id=body.worker_id,
+                               payload={"job_id":str(job_id),"assignment_id":str(aid),"selection":"marketplace"})
+            response={"challenge_id":challenge_id,"job_id":str(job_id),"assignment_id":str(aid),"worker_id":str(body.worker_id),"status":"ASSIGNED"}
+            idempotency_store(cur,account_id,request,payload,response)
+            return response
 
 
 @app.post("/creator/challenges")
