@@ -26,7 +26,7 @@ Set:
 
 ```bash
 export SATOSHI_HUNT_API="https://your-api.example"
-export SATOSHI_HUNT_TOKEN="YOUR_ACCOUNT_SESSION"
+export SATOSHI_HUNT_TOKEN="YOUR_WORKER_TOKEN"
 export SATOSHI_HUNT_WORKER_ID="YOUR_REGISTERED_WORKER_UUID"
 python worker.py
 ```
