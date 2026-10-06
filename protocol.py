@@ -12,8 +12,6 @@ def normalize(p):
     q["rules"]=str(q.get("rules",""))
     q["provenance"]=q.get("provenance")
     q["verification"]=q.get("verification")
-    q["provenance"]=q.get("provenance")
-    q["verification"]=q.get("verification")
     return q
 
 def classify(p):
@@ -23,7 +21,16 @@ def classify(p):
     return p["status"]
 
 def eligible(p):
-    return (classify(p)=="OPEN + FUNDED" and p.get("rules")=="public-reward-challenge" and bool(p.get("provenance")) and bool(p.get("verification")) )
+    provenance = p.get("provenance")
+    verification = p.get("verification")
+    return (
+        classify(p) == "OPEN + FUNDED"
+        and p.get("rules") == "public-reward-challenge"
+        and isinstance(provenance, dict)
+        and all(str(provenance.get(k, "")).strip() for k in ("url", "source_id", "checked_at"))
+        and isinstance(verification, dict)
+        and all(str(verification.get(k, "")).strip() for k in ("method", "source_id", "checked_at", "fingerprint"))
+    )
 
 def make_job(p):
     p=normalize(p)
