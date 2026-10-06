@@ -31,7 +31,7 @@ ok &= check("health", s==200 and b.get("ok") is True and b.get("custody")=="non-
 s,h,b=request("/ready")
 ok &= check("readiness", s==200 and b.get("ready") is True and b.get("database") is True and b.get("redis") is True, f"{s} {b}")
 s,h,b=request("/marketplace/challenges")
-ok &= check("unauthenticated marketplace denied", s==401, f"{s} {b}")
+ok &= check("public marketplace accessible", s==200 and isinstance(b.get("challenges"), list), f"{s} challenges={len(b.get("challenges", [])) if isinstance(b.get("challenges"), list) else "n/a"}")
 curl = subprocess.run(
     ["curl", "-sS", "-i", "-X", "OPTIONS", BASE + "/auth/login",
      "-H", f"Origin: {ORIGIN}",
