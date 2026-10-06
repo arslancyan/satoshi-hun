@@ -1241,17 +1241,31 @@ def scheduler_recommendations(limit: int = 10):
                 seconds = int(estimated_seconds or 0)
                 if seconds <= 0:
                     seconds = max(3600, int(float(difficulty or 1) * 3600))
-                score = economic_priority(float(balance), seconds, 0.01, 1.0)
+                cur.execute(
+                    "select count(*) filter (where result_status='VERIFIED'), count(*) "
+                    "from work_claims where job_id=%s and finished_at > now() - interval '30 days'",
+                    (job_id,)
+                )
+                verified_claims, recent_claims = cur.fetchone()
+                success_probability = (verified_claims / recent_claims) if recent_claims else 0.01
+                score = economic_priority(float(balance), seconds, success_probability, 1.0)
                 reason = {
-                    "expected_success_probability": 0.01,
+                    "estimated_success_probability": round(success_probability, 8),
+                    "verified_claims_30d": verified_claims,
+                    "claims_30d": recent_claims,
                     "estimated_worker_seconds": seconds,
                     "funded_balance_btc": float(balance),
                     "policy": "expected_reward_per_worker_hour"
                 }
                 cur.execute(
-                    "insert into scheduler_decisions(id,job_id,score,reason) values(%s,%s,%s,%s::jsonb)",
-                    (uuid4(), job_id, score, json.dumps(reason))
+                    "select 1 from scheduler_decisions where job_id=%s and created_at > now() - interval '5 minutes' limit 1",
+                    (job_id,)
                 )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        "insert into scheduler_decisions(id,job_id,score,reason) values(%s,%s,%s,%s::jsonb)",
+                        (uuid4(), job_id, score, json.dumps(reason))
+                    )
                 recommendations.append({
                     "job_id": str(job_id),
                     "puzzle_id": puzzle_id,
