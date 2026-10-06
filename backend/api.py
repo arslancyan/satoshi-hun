@@ -1152,13 +1152,29 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
             account_row=cur.fetchone()
             if not account_row: raise HTTPException(404,"Worker not found")
             account_id=account_row[0]
-            cur.execute("select extract(epoch from (%s-started_at))::bigint from job_assignments where id=%s",(now,assignment_id))
-            seconds=max(0,int(cur.fetchone()[0] or 0))
+            started_at=row[4]
+            if not started_at:
+                raise HTTPException(409, "Assignment has no server start time")
+            seconds=max(0,int((now-started_at).total_seconds()))
             cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s and status='RUNNING'",(now,now,seconds,assignment_id))
             if cur.rowcount != 1:
                 raise HTTPException(409, "Assignment changed before completion")
             cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
-            cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
+            period_start=started_at.date()
+            end_date=now.date()
+            while period_start <= end_date:
+                day_start=datetime.combine(period_start, datetime.min.time(), tzinfo=timezone.utc)
+                day_end=day_start+timedelta(days=1)
+                segment_start=max(started_at,day_start)
+                segment_end=min(now,day_end)
+                segment_seconds=max(0,int((segment_end-segment_start).total_seconds()))
+                if segment_seconds:
+                    cur.execute(
+                        "insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,%s,%s) "
+                        "on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",
+                        (uuid4(),account_id,row[2],period_start,segment_seconds),
+                    )
+                period_start += timedelta(days=1)
             record_audit_event(cur,"COMPLETED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"contribution_seconds":seconds})
             response={"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
 
