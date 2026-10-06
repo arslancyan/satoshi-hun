@@ -43,3 +43,21 @@ A challenge becomes eligible only after: public source identified; reward/fundin
 
 ## Safety boundary
 Satoshi Hunt does not request or store private keys or seed phrases, access wallets on behalf of users, perform covert/background computation, crack ordinary Bitcoin private keys, access private/non-public challenges, or automatically sign/send Bitcoin transactions. All computation must be opt-in and scoped to explicitly public reward challenges.
+
+
+## Protocol v1 — phases 13–31
+
+The next platform layer is now represented in code and migrations:
+
+- adaptive worker allocation and capability matching;
+- checkpoint/resume and crash recovery;
+- contribution proofs and proof hashes;
+- duplicate/range/proof anti-cheat primitives;
+- reputation events and scheduler decisions;
+- public audit explorer;
+- creator registration, approval and challenge offers;
+- marketplace publication;
+- lifecycle pause controls;
+- staging/load-test documentation.
+
+Remaining production gates are infrastructure deployment, real challenge adapters/provenance, real worker beta testing, abuse/load testing, and external security review.
