@@ -41,7 +41,7 @@ def test_protocol_requires_provenance_and_verification():
         "rules": "public-reward-challenge",
     }
     assert protocol_eligible(record) is False
-    record["provenance"] = {"url": "https://example.com", "checked_at": "2026-01-01T00:00:00Z"}
+    record["provenance"] = {"url": "https://example.com", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z"}
     record["verification"] = {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False}
     assert protocol_eligible(record) is True
 
@@ -55,7 +55,7 @@ def test_verified_result_pipeline_requires_registered_adapter():
         "reward_btc": 1,
         "rules": "public-reward-challenge",
         "provenance": {"url": "https://example.com/challenge", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z"},
-        "verification": {"method": "published-rule", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False},
+        "verification": {"method": "published-rule", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "abc", "funding_match": True, "verification_stale": False},
     }
     result = verify_candidate(record, "candidate")
     assert result["verified"] is False
@@ -70,7 +70,7 @@ def test_hash_commitment_adapter_verifies_only_exact_hash():
         "balance_btc": 1,
         "reward_btc": 1,
         "rules": "public-reward-challenge",
-        "provenance": {"url": "https://example.com/challenge", "checked_at": "2026-01-01T00:00:00Z"},
+        "provenance": {"url": "https://example.com/challenge", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z"},
         "verification": {
             "method": "published hash commitment",
             "checked_at": "2026-01-01T00:00:00Z",
