@@ -291,6 +291,7 @@ async function loadRegistry(){try{const r=await fetch("puzzles.json",{cache:"no-
     while(head.nextSibling) body.appendChild(head.nextSibling);
     panel.appendChild(body);
     panel.classList.add("collapsible","is-collapsed");
+    panel.dataset.wired="1";
     head.setAttribute("role","button");
     head.setAttribute("tabindex","0");
     head.setAttribute("aria-expanded","false");
