@@ -32,6 +32,9 @@ Implemented in schema: manual-review community allocations; source reward event 
 Frontend already exposes worker/network concepts. Production requirement: replace demo telemetry with backend-derived counts and never fabricate worker capacity.
 
 ## 10. Economic safety and bounded allocation
+## 10.1 Intelligent economic scheduler
+Implemented: `/scheduler/recommendations` ranks queued funded public challenges by conservative expected reward per worker-hour, using recent verified/claim outcomes when available and estimated work duration from published offers. Scheduler decisions are persisted with bounded five-minute decision logging. This is a scheduling signal, not a guaranteed earnings forecast.
+
 Implemented: server-side allocation guard with configurable maximum active assignments, one active assignment per job, daily verified worker-hour ceiling, and a funded-challenge check immediately before assignment. /network/economics exposes current capacity state without exposing private worker data.
 Policy: worker computation stays on the worker device; Satoshi Hunt has no compute payout obligation merely because a worker is online or active. Scaling is gated by funded public opportunities rather than registration count.
 
