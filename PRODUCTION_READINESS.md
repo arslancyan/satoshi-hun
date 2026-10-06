@@ -22,7 +22,8 @@
 - TLS/domain configuration
 - Monitoring, alerting, backups, restore drills (runbook added; execution still requires production infrastructure)
 - External penetration test / security review
-- Real public challenge adapters and authoritative verification sources
+- Real public challenge adapter: Peter Todd hash-collision bounty verifier (research-breakthrough scope; not a routine profitable compute job) and authoritative public provenance record
+- Non-custodial payout queue with owner processing state and mandatory external Bitcoin txid before PAID
 - Manual reward settlement operations
 
 ## Local/staging hardening added
@@ -43,4 +44,5 @@
 8. Reward settlement transitions tested.
 9. No high/critical dependency or static-analysis findings.
 10. External security review completed.
-11. At least one real public challenge has independently verified provenance, funding, and published verification rules.
+11. At least one real public challenge has independently verified provenance, funding, and published verification rules. **Repository adapter/manifest is now present; live escrow must be rechecked immediately before enabling it for production.**
+12. External payout processor is configured; only externally confirmed Bitcoin transaction IDs can move a withdrawal to PAID.
