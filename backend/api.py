@@ -1552,6 +1552,40 @@ def scheduler_recommendations(limit: int = 10):
             recommendations.sort(key=lambda x: x["priority_score"], reverse=True)
             return {"recommendations": recommendations[:limit]}
 
+
+class WithdrawalComplete(BaseModel):
+    external_reference: str = Field(min_length=3, max_length=200)
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/complete")
+def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"withdrawal_id":str(withdrawal_id),"external_reference":body.external_reference}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute(
+                "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
+                "where id=%s and status in ('QUEUED','PROCESSING') returning account_id,amount_btc",
+                (body.external_reference.strip(),withdrawal_id),
+            )
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(409,"Withdrawal is not queued or processing")
+            record_audit_event(
+                cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,account_id,
+                payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),
+                         "external_reference":body.external_reference.strip(),"custody":"none"},
+            )
+            response={"withdrawal_id":str(withdrawal_id),"status":"PAID",
+                      "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+
 @app.get("/network/economics")
 def network_economics():
     with db() as conn:
