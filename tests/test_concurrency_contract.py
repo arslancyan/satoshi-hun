@@ -6,6 +6,12 @@ def test_database_enforces_one_active_assignment_per_job():
     assert "uq_active_job_assignment" in SQL
     assert "where status in ('ASSIGNED','RUNNING')" in SQL
 
+def test_marketplace_switch_serializes_per_account():
+    section=API[API.index('@app.post("/marketplace/challenges/{challenge_id}/run")'):API.index('@app.post("/creator/challenges")')]
+    assert "pg_advisory_xact_lock(hashtext(%s))" in section
+    assert "One active puzzle per account" in section
+
+
 def test_assignment_path_serializes_capacity_decisions():
     helper=API[API.index("def economic_capacity"):API.index('@app.post("/jobs/{job_id}/assign")')]
     assert "pg_advisory_xact_lock(93218471)" in helper
