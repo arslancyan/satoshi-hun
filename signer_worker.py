@@ -97,26 +97,38 @@ def handle_withdrawal(withdrawal):
     wid = withdrawal["id"]
     amount = withdrawal["amount_btc"]
     destination = withdrawal["payout_address"]
+    settlement_status = withdrawal.get("settlement_status", "PSBT_REQUESTED")
+    unsigned_psbt = withdrawal.get("unsigned_psbt")
+    signed_psbt = withdrawal.get("signed_psbt")
+    final_tx_hex = withdrawal.get("final_tx_hex")
 
-    psbt = create_psbt(destination, amount)
-    api_post(
-        f"/internal/payouts/{wid}/psbt",
-        {"unsigned_psbt": psbt, "signer_id": SIGNER_ID},
-        signer=True,
-    )
+    # Recovery is deliberately stateful: never create a second PSBT when the
+    # API already has a safe in-flight settlement for this withdrawal.
+    if settlement_status == "SIGNED" and final_tx_hex:
+        txid = rpc("sendrawtransaction", [final_tx_hex])
+    else:
+        if settlement_status == "PSBT_READY" and unsigned_psbt:
+            psbt = unsigned_psbt
+        else:
+            psbt = create_psbt(destination, amount)
+            api_post(
+                f"/internal/payouts/{wid}/psbt",
+                {"unsigned_psbt": psbt, "signer_id": SIGNER_ID},
+                signer=True,
+            )
 
-    signed_psbt, final_tx_hex = sign_and_finalize(psbt)
-    api_post(
-        f"/internal/payouts/{wid}/signed",
-        {
-            "signed_psbt": signed_psbt,
-            "final_tx_hex": final_tx_hex,
-            "signer_id": SIGNER_ID,
-        },
-        signer=True,
-    )
+        signed_psbt, final_tx_hex = sign_and_finalize(psbt)
+        api_post(
+            f"/internal/payouts/{wid}/signed",
+            {
+                "signed_psbt": signed_psbt,
+                "final_tx_hex": final_tx_hex,
+                "signer_id": SIGNER_ID,
+            },
+            signer=True,
+        )
+        txid = rpc("sendrawtransaction", [final_tx_hex])
 
-    txid = rpc("sendrawtransaction", [final_tx_hex])
     api_post(
         f"/internal/payouts/{wid}/broadcast",
         {"txid": txid, "broadcaster_id": SIGNER_ID},
