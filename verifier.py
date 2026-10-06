@@ -110,3 +110,25 @@ class HashCommitmentAdapter(ChallengeAdapter):
 
 
 register_adapter(HashCommitmentAdapter())
+
+
+def verify_candidate_hash(record, candidate_hash):
+    """Verify a worker-submitted candidate hash without receiving candidate material."""
+    normalized = normalize(record)
+    candidate_hash = str(candidate_hash)
+    if not eligible(normalized):
+        return VerificationResult(False, "Challenge is not fully verified for solver use.", candidate_hash).as_dict()
+    adapter = ADAPTERS.get(str(normalized.get("type", "unknown")))
+    if not adapter:
+        return VerificationResult(False, "No challenge-specific verifier registered.", candidate_hash).as_dict()
+    try:
+        result = adapter.verify(normalized, candidate_hash)
+    except Exception as exc:
+        return VerificationResult(False, f"Verifier error: {type(exc).__name__}", candidate_hash).as_dict()
+    if not isinstance(result, bool):
+        return VerificationResult(False, "Verifier returned an invalid result.", candidate_hash).as_dict()
+    return VerificationResult(
+        result,
+        "Verified by registered public-challenge adapter." if result else "Candidate rejected by challenge adapter.",
+        candidate_hash,
+    ).as_dict()
