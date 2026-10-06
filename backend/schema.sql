@@ -107,6 +107,9 @@ create table if not exists reward_events (
   settlement_status text not null default 'REVIEW'
     check (settlement_status in ('REVIEW','APPROVED','SETTLED','VOID')),
   created_at timestamptz not null default now(),
+  source_claim_id uuid references work_claims(id),
+  approved_at timestamptz,
+  settled_at timestamptz,
   check (worker_share_btc + platform_fee_btc = gross_reward_btc)
 );
 
@@ -117,7 +120,8 @@ create table if not exists community_allocations (
   status text not null default 'MANUAL_REVIEW'
     check (status in ('MANUAL_REVIEW','APPROVED','DISTRIBUTED','CANCELLED')),
   created_at timestamptz not null default now(),
-  approved_at timestamptz
+  approved_at timestamptz,
+  distributed_at timestamptz
 );
 
 create index if not exists idx_workers_account on workers(account_id);
@@ -125,6 +129,7 @@ create index if not exists idx_jobs_puzzle on jobs(puzzle_id);
 create index if not exists idx_claims_worker on work_claims(worker_id);
 create index if not exists idx_reward_events_account on reward_events(account_id);
 create unique index if not exists uq_reward_event_puzzle_account on reward_events(puzzle_id,account_id) where settlement_status <> 'VOID';
+create unique index if not exists uq_reward_event_claim on reward_events(source_claim_id) where source_claim_id is not null;
 
 
 create table if not exists audit_events (
