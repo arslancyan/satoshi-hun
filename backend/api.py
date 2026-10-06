@@ -1714,8 +1714,8 @@ def scheduler_recommendations(limit: int = 10):
                 "from jobs j join challenge_registry c on c.id=j.puzzle_id "
                 "left join lateral (select estimated_seconds,estimated_difficulty from challenge_offers "
                 "where challenge_id=c.id and status='PUBLISHED' order by published_at desc nulls last,created_at desc limit 1) o on true "
-                "where j.scope='public-reward-challenge' and j.status='QUEUED' and c.status='OPEN + FUNDED' and c.balance_btc > 0
-                   and c.funding_match=true and c.verification_stale=false "
+                "where j.scope='public-reward-challenge' and j.status='QUEUED' and c.status='OPEN + FUNDED' and c.balance_btc > 0 "
+                "and c.funding_match=true and c.verification_stale=false "
                 "order by c.balance_btc desc limit %s", (limit * 3,))
             rows = cur.fetchall()
             recommendations = []
