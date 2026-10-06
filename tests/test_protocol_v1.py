@@ -55,7 +55,7 @@ def test_protocol_eligibility_requires_complete_public_metadata():
         "status": "OPEN + FUNDED",
         "rules": "public-reward-challenge",
         "provenance": {"url": "https://example.com", "source_id": "public-1"},
-        "verification": {"method": "hash-commitment", "source_id": "public-1", "checked_at": "2026-10-06T00:00:00Z", "fingerprint": "fp"},
+        "verification": {"method": "hash-commitment", "source_id": "public-1", "checked_at": "2026-10-06T00:00:00Z", "fingerprint": "fp", "funding_match": True, "verification_stale": False},
     }
     assert eligible(record) is False
     record["provenance"]["checked_at"] = "2026-10-06T00:00:00Z"
