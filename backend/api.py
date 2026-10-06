@@ -20,6 +20,7 @@ from settlement import build_reward_event
 from protocol_v1 import proof_hash, capability_score, adaptive_ranges, reliability_score, economic_priority
 from anti_cheat import security_flags, reputation_score
 from payouts import validate_external_txid
+from owner_config import OWNER_PLATFORM_FEE_BTC_ADDRESS
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -1548,9 +1549,9 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
         (uuid4(),account_id,reward_id,event["worker_share_btc"]),
     )
     cur.execute(
-        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc) values(%s,%s,%s,'PLATFORM_FEE',%s) "
+        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) values(%s,%s,%s,'PLATFORM_FEE',%s,%s) "
         "on conflict(reward_event_id,entry_type) do nothing",
-        (uuid4(),account_id,reward_id,event["platform_fee_btc"]),
+        (uuid4(),account_id,reward_id,event["platform_fee_btc"],OWNER_PLATFORM_FEE_BTC_ADDRESS),
     )
     cur.execute("select btc_payout_address from accounts where id=%s for update",(account_id,))
     payout=cur.fetchone()
@@ -1967,7 +1968,7 @@ def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(accoun
                     cur.execute(
                         "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc) "
                         "values(%s,%s,%s,'PLATFORM_FEE',%s) on conflict(reward_event_id,entry_type) do nothing",
-                        (uuid4(), account_id, reward_id, event["platform_fee_btc"]),
+                        (uuid4(), account_id, reward_id, event["platform_fee_btc"], OWNER_PLATFORM_FEE_BTC_ADDRESS),
                     )
                     cur.execute("select btc_payout_address from accounts where id=%s for update", (account_id,))
                     payout_row = cur.fetchone()
