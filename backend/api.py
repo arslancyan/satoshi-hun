@@ -548,7 +548,8 @@ def pause_challenge(challenge_id: str, request: Request, account_id: UUID = Depe
             return response
 
 @app.get("/marketplace/challenges")
-def marketplace(account_id: UUID = Depends(account_id_from_auth)):
+def marketplace():
+    """Public read-only marketplace feed; starting work still requires authentication."""
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -569,10 +570,8 @@ def marketplace(account_id: UUID = Depends(account_id_from_auth)):
                   "provenance","verification","payout","source_adapter","live_checked_at","live_verification",
                   "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error"]
             rows=[dict(zip(keys,x)) for x in cur.fetchall()]
-            cur.execute("select challenge_id from challenge_selections where account_id=%s order by selected_at desc",(account_id,))
-            selected={x[0] for x in cur.fetchall()}
             for row in rows:
-                row["selected"]=row["challenge_id"] in selected
+                row["selected"]=False
             return {"challenges":rows,"offers":rows}
 
 
