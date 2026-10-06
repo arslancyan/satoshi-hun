@@ -231,6 +231,17 @@ def require_owner(cur, account_id: UUID):
         raise HTTPException(403, "Owner authorization required")
 
 
+def idempotency_key(request: Request):
+    value = request.headers.get("Idempotency-Key", "").strip()
+    if value and len(value) <= 128:
+        return value
+    return None
+
+
+def worker_token():
+    return secrets.token_urlsafe(32)
+
+
 def worker_owned(cur, worker_id: UUID, account_id: UUID, active_only=True):
     if active_only:
         cur.execute("select id from workers where id=%s and account_id=%s and status='ACTIVE'", (worker_id, account_id))
@@ -249,6 +260,21 @@ def create_worker(body: WorkerCreate, request: Request, account_id: UUID = Depen
         with conn.cursor() as cur:
             cur.execute("insert into workers(id,account_id,label,token_hash) values(%s,%s,%s,%s)", (wid, account_id, body.label, token_hash))
     return {"id": str(wid), "label": body.label, "status": "ACTIVE", "worker_token": worker_token}
+
+
+@app.post("/workers/{worker_id}/rotate")
+def rotate_worker(worker_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    token = worker_token()
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    with db() as conn:
+        with conn.cursor() as cur:
+            if not worker_owned(cur, worker_id, account_id, active_only=True):
+                raise HTTPException(404, "Worker not found")
+            cur.execute("update workers set token_hash=%s,last_seen_at=now() where id=%s and status='ACTIVE'", (token_hash,worker_id))
+            if cur.rowcount != 1: raise HTTPException(409, "Worker is not active")
+            record_audit_event(cur,"WORKER_TOKEN_ROTATED","worker",worker_id,account_id,worker_id,payload={"token_storage":"hash_only"})
+    return {"worker_id":str(worker_id),"worker_token":token,"storage":"memory_only"}
 
 
 @app.post("/workers/{worker_id}/revoke")
