@@ -45,3 +45,13 @@ Run `python audit.py` before loading a registry. The audit rejects duplicate IDs
 - The platform fee is accounted separately from user rewards.
 - Community distribution is **owner-only and manual**: when the owner elects to allocate part of the owner's own 15% pool, eligible accounts receive shares based on verified worker-hours. Other users' 15% fees are never included in this pool.
 - Reward settlement remains reviewable/auditable; private keys are never collected or stored.
+
+## Production preflight
+
+Before enabling a production deployment, run:
+
+```bash
+SATOSHI_HUNT_ENV=production python production_check.py
+```
+
+The check is side-effect free. It requires a configured PostgreSQL URL, strong JWT and challenge-ingestion secrets, an owner identity, a shared Redis rate-limit store, an explicit HTTPS frontend origin, and bounded worker allocation settings. It never handles private keys or sends Bitcoin.
