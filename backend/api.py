@@ -35,7 +35,7 @@ MAX_ACTIVE_ASSIGNMENTS_PER_JOB = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMEN
 MAX_NETWORK_WORKER_HOURS_PER_DAY = max(1, int(os.environ.get("MAX_NETWORK_WORKER_HOURS_PER_DAY", "10000")))
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
-app = FastAPI(title="Satoshi Hunt API", version="0.1.0")
+app = FastAPI(title="Satoshi Hunt API", version="0.1.1")
 
 ALLOWED_FRONTEND_ORIGINS = list(dict.fromkeys(
     origin for origin in (FRONTEND_ORIGIN, "https://arslancyan.github.io") if origin
@@ -817,7 +817,7 @@ def reputation(account_id: UUID = Depends(account_id_from_auth)):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "satoshi-hunt-api", "custody": "non-custodial"}
+    return {"ok": True, "service": "satoshi-hunt-api", "version": "0.1.1", "custody": "non-custodial"}
 
 
 @app.get("/ready")
