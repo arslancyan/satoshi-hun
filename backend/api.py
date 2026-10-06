@@ -564,14 +564,16 @@ def marketplace_detail(challenge_id: str, account_id: UUID = Depends(account_id_
         with conn.cursor() as cur:
             cur.execute(
                 """select id,title,challenge_type,reward_btc,balance_btc,status,provenance,
-                          verification,payout,source_adapter,live_checked_at,live_verification
+                          verification,payout,source_adapter,live_checked_at,live_verification,
+                          advertised_reward_btc,verified_balance_btc,funding_match,verification_stale,last_live_check_error
                    from challenge_registry where id=%s""",(challenge_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(404,"Challenge not found")
-            if row[5]!="OPEN + FUNDED" or row[4] <= 0 or row[15] is not True or row[16] is not False:
+            if row[5]!="OPEN + FUNDED" or row[4] <= 0 or row[14] is not True or row[15] is not False:
                 raise HTTPException(409,"Challenge is not currently live and funded")
             keys=["challenge_id","title","challenge_type","reward_btc","balance_btc","status",
-                  "provenance","verification","payout","source_adapter","live_checked_at","live_verification"]
+                  "provenance","verification","payout","source_adapter","live_checked_at","live_verification",
+                  "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error"]
             cur.execute("select 1 from challenge_selections where account_id=%s and challenge_id=%s",(account_id,challenge_id))
             selected=cur.fetchone() is not None
             return {**dict(zip(keys,row)),"selected":selected}
