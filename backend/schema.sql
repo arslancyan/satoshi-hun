@@ -215,3 +215,7 @@ create table if not exists withdrawal_requests (
 );
 
 create index if not exists idx_withdrawals_account on withdrawal_requests(account_id,created_at);
+
+-- Account passwords are salted PBKDF2 hashes; plaintext passwords are never stored.
+alter table accounts add column if not exists password_hash text;
+create index if not exists idx_withdrawals_status_created on withdrawal_requests(status,created_at);
