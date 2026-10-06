@@ -3,12 +3,76 @@
   "source": "local-demo",
   "notice": "Demo records only. Replace with verified public challenge records before production.",
   "puzzles": [
-    {"id":"135","title":"Cipher Trail Alpha","type":"encoding","reward_btc":0.010,"balance_btc":0.010,"status":"OPEN + FUNDED","rules":"public-reward-challenge"},
-    {"id":"142","title":"Pattern Gate","type":"pattern","reward_btc":0.005,"balance_btc":0.005,"status":"OPEN + FUNDED","rules":"public-reward-challenge"},
-    {"id":"151","title":"Logic Sequence","type":"logic","reward_btc":0.002,"balance_btc":0.002,"status":"OPEN + FUNDED","rules":"public-reward-challenge"},
-    {"id":"118","title":"Solved Demo Empty","type":"pattern","reward_btc":0.008,"balance_btc":0,"status":"SOLVED + EMPTY","rules":"public-reward-challenge"},
-    {"id":"109","title":"Solved Demo Funded","type":"cipher","reward_btc":0.015,"balance_btc":0.015,"status":"SOLVED + FUNDED","rules":"public-reward-challenge"},
-    {"id":"101","title":"Open Unfunded","type":"logic","reward_btc":0.020,"balance_btc":0,"status":"OPEN + UNFUNDED","rules":"public-reward-challenge"},
-    {"id":"099","title":"Status Pending","type":"unknown","reward_btc":0,"balance_btc":0,"status":"UNKNOWN","rules":"unverified"}
-  ]
+    {
+      "id": "135",
+      "title": "Cipher Trail Alpha",
+      "type": "encoding",
+      "reward_btc": 0.01,
+      "balance_btc": 0.01,
+      "status": "OPEN + FUNDED",
+      "rules": "public-reward-challenge"
+    },
+    {
+      "id": "142",
+      "title": "Pattern Gate",
+      "type": "pattern",
+      "reward_btc": 0.005,
+      "balance_btc": 0.005,
+      "status": "OPEN + FUNDED",
+      "rules": "public-reward-challenge"
+    },
+    {
+      "id": "151",
+      "title": "Logic Sequence",
+      "type": "logic",
+      "reward_btc": 0.002,
+      "balance_btc": 0.002,
+      "status": "OPEN + FUNDED",
+      "rules": "public-reward-challenge"
+    },
+    {
+      "id": "118",
+      "title": "Solved Demo Empty",
+      "type": "pattern",
+      "reward_btc": 0.008,
+      "balance_btc": 0,
+      "status": "SOLVED + EMPTY",
+      "rules": "public-reward-challenge"
+    },
+    {
+      "id": "109",
+      "title": "Solved Demo Funded",
+      "type": "cipher",
+      "reward_btc": 0.015,
+      "balance_btc": 0.015,
+      "status": "SOLVED + FUNDED",
+      "rules": "public-reward-challenge"
+    },
+    {
+      "id": "101",
+      "title": "Open Unfunded",
+      "type": "logic",
+      "reward_btc": 0.02,
+      "balance_btc": 0,
+      "status": "OPEN + UNFUNDED",
+      "rules": "public-reward-challenge"
+    },
+    {
+      "id": "099",
+      "title": "Status Pending",
+      "type": "unknown",
+      "reward_btc": 0,
+      "balance_btc": 0,
+      "status": "UNKNOWN",
+      "rules": "unverified"
+    }
+  ],
+  "verified": false,
+  "registry_version": 2,
+  "fields": {
+    "provenance": "Required for production records",
+    "verification": "Required before solver eligibility",
+    "coverage": "Reserved for work-allocation metrics",
+    "last_checked_at": "Reserved for backend verification timestamp"
+  }
 }
