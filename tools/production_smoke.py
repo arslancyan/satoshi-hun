@@ -24,7 +24,7 @@ def check(name, ok, detail=""):
 
 ok=True
 s,h,b=request("/health")
-ok &= check("health", s==200 and b.get("status")=="ok", f"{s} {b}")
+ok &= check("health", s==200 and b.get("ok") is True and b.get("custody")=="non-custodial", f"{s} {b}")
 s,h,b=request("/ready")
 ok &= check("readiness", s==200 and b.get("status")=="ready", f"{s} {b}")
 s,h,b=request("/marketplace/challenges")
