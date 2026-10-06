@@ -55,6 +55,8 @@ jobs:
           python-version: "3.12"
       - name: Install database dependency
         run: pip install "psycopg[binary]>=3.2,<4"
+      - name: Validate challenge registry contract
+        run: python -m json.tool challenge-registry.schema.json >/dev/null && python -m json.tool challenge-registry.example.json >/dev/null
       - name: Apply schema and migrations
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/satoshi_hunt
