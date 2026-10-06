@@ -1446,9 +1446,13 @@ def expire_stale_assignments(cur):
     )
     for assignment_id,job_id,worker_id in cur.fetchall():
         cur.execute(
-            "update jobs set status='QUEUED',completed_at=null "
-            "where id=%s and status in ('RUNNING','QUEUED')",
-            (job_id,),
+            """update jobs set status='QUEUED',completed_at=null
+               where id=%s and status in ('RUNNING','QUEUED')
+                 and not exists (
+                   select 1 from job_assignments
+                   where job_id=%s and status in ('ASSIGNED','RUNNING')
+                 )""",
+            (job_id,job_id),
         )
         cur.execute("select account_id from workers where id=%s", (worker_id,))
         account_row=cur.fetchone()
@@ -1546,7 +1550,24 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
             cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s and status='RUNNING'",(now,now,seconds,assignment_id))
             if cur.rowcount != 1:
                 raise HTTPException(409, "Assignment changed before completion")
-            cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
+            cur.execute(
+                """update jobs set status=case
+                       when exists (
+                         select 1 from job_assignments
+                         where job_id=%s and status in ('ASSIGNED','RUNNING')
+                       ) then 'RUNNING'
+                       else 'COMPLETED'
+                     end,
+                     completed_at=case
+                       when exists (
+                         select 1 from job_assignments
+                         where job_id=%s and status in ('ASSIGNED','RUNNING')
+                       ) then null
+                       else %s
+                     end
+                   where id=%s and status='RUNNING'""",
+                (row[1],row[1],now,row[1]),
+            )
             period_start=started_at.date()
             end_date=now.date()
             while period_start <= end_date:
