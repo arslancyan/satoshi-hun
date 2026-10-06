@@ -85,9 +85,6 @@ def request_link(body: LinkRequest):
             cur.execute("select id from accounts where email=%s", (body.email.lower(),))
             row = cur.fetchone()
             cur.execute(
-                "create table if not exists auth_links (email text primary key, token_hash text not null, expires_at timestamptz not null)"
-            )
-            cur.execute(
                 "insert into auth_links(email,token_hash,expires_at) values(%s,%s,%s) "
                 "on conflict(email) do update set token_hash=excluded.token_hash, expires_at=excluded.expires_at",
                 (body.email.lower(), token_hash, datetime.now(timezone.utc) + timedelta(minutes=15)),
