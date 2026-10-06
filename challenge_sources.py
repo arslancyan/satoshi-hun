@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 AUTHORITATIVE_ESCROW_SPEND_SLUGS = set(filter(None, os.getenv("AUTHORITATIVE_ESCROW_SPEND_SLUGS", "peter-todd-hash-collision-bounties-0-59btc").split(",")))
+ID_ALIASES = {}
+for _pair in filter(None, os.getenv("CHALLENGE_ID_ALIASES", "peter-todd-hash-collision-bounties-0-59btc:peter-todd-hash-collision-bounties").split(",")):
+    _src, _dst = _pair.split(":", 1)
+    ID_ALIASES[_src] = _dst
 
 SOURCE_URL = os.getenv(
     "PUBLIC_CHALLENGE_SOURCE_URL",
@@ -333,7 +337,7 @@ class OpenCryptoPuzzlesAdapter:
 
             out.append(
                 LiveSourceRecord(
-                    str(puzzle["slug"]),
+                    ID_ALIASES.get(str(puzzle["slug"]), str(puzzle["slug"])),
                     str(puzzle.get("title", puzzle["slug"])),
                     "bitcoin",
                     published_sats / 100_000_000,
