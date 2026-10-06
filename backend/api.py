@@ -14,6 +14,8 @@ import redis
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
+from verifier import verify_candidate_hash
+from settlement import build_reward_event
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -514,11 +516,61 @@ def audit_account(account_id: UUID = Depends(account_id_from_auth)):
 
 @app.post("/jobs/{job_id}/verify")
 def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    """Mark a completed public-challenge job verified only after an adapter has
-    independently validated its submitted candidate. This endpoint intentionally
-    does not perform private-key or wallet access."""
+    """Run the registered server-side adapter against submitted candidate hashes."""
     enforce_rate_limit(request, "write")
-    raise HTTPException(
-        501,
-        "Challenge-specific verification adapter is required before a reward result can be verified.",
-    )
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select j.id,j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification "
+                "from jobs j join challenge_registry c on c.id=j.puzzle_id "
+                "where j.id=%s and j.scope='public-reward-challenge' for update",
+                (job_id,),
+            )
+            job = cur.fetchone()
+            if not job:
+                raise HTTPException(404, "Job or challenge registry entry not found")
+            if job[2] not in ("COMPLETED","RUNNING"):
+                raise HTTPException(409, f"Job is {job[2]}")
+            record = {
+                "id": job[1], "type": job[3], "reward_btc": job[4],
+                "balance_btc": job[5], "status": job[6], "rules": job[7],
+                "provenance": job[8], "verification": job[9],
+            }
+            cur.execute(
+                "select c.id,c.worker_id,c.candidate_hash,w.account_id "
+                "from work_claims c join workers w on w.id=c.worker_id "
+                "where c.job_id=%s and c.result_status='TESTED' "
+                "and w.account_id=%s order by c.finished_at asc for update",
+                (job_id, account_id),
+            )
+            claims = cur.fetchall()
+            if not claims:
+                raise HTTPException(404, "No TESTED claim is available for this account")
+            for claim_id, worker_id, candidate_hash, claimant_account in claims:
+                result = verify_candidate_hash(record, candidate_hash)
+                if not result["verified"]:
+                    cur.execute(
+                        "update work_claims set result_status='REJECTED' where id=%s and result_status='TESTED'",
+                        (claim_id,),
+                    )
+                    continue
+                cur.execute(
+                    "update work_claims set result_status='VERIFIED' where id=%s and result_status='TESTED'",
+                    (claim_id,),
+                )
+                if cur.rowcount != 1:
+                    continue
+                cur.execute(
+                    "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",
+                    (job_id,),
+                )
+                event = build_reward_event(account_id, job[1], job[4])
+                cur.execute(
+                    "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status) "
+                    "values(%s,%s,%s,%s,%s,%s,'REVIEW') "
+                    "on conflict (puzzle_id,account_id) where settlement_status <> 'VOID' do nothing",
+                    (uuid4(), account_id, job[1], event["gross_reward_btc"], event["worker_share_btc"], event["platform_fee_btc"]),
+                )
+                record_audit_event(cur,"VERIFIED","job",job_id,account_id,worker_id,{"candidate_hash":candidate_hash,"reward_status":"REVIEW"})
+                return {"verified":True,"claim_id":str(claim_id),"candidate_hash":candidate_hash,"reward_status":"REVIEW"}
+    raise HTTPException(422, "All submitted candidates were rejected by the challenge adapter.")
