@@ -73,6 +73,7 @@ def test_hash_commitment_adapter_verifies_only_exact_hash():
         "provenance": {"url": "https://example.com/challenge", "source_id": "test", "checked_at": "2026-01-01T00:00:00Z"},
         "verification": {
             "method": "published hash commitment",
+            "source_id": "test",
             "checked_at": "2026-01-01T00:00:00Z",
             "fingerprint": "abc",
             "expected_candidate_hash": "deadbeef",
