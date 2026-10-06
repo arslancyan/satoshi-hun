@@ -990,6 +990,9 @@ def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(acc
 
 
 def economic_capacity(cur, job_id: UUID):
+    # Serialize allocation decisions so concurrent requests cannot overshoot
+    # the global active-assignment ceiling.
+    cur.execute("select pg_advisory_xact_lock(93218471)")
     cur.execute("select count(*) from job_assignments where status in ('ASSIGNED','RUNNING')")
     active_assignments = cur.fetchone()[0]
     if active_assignments >= MAX_ACTIVE_ASSIGNMENTS:
