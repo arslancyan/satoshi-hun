@@ -63,3 +63,10 @@ def test_claim_lifecycle_requires_active_assignment_and_job():
     claim = api[api.index('@app.post("/jobs/{job_id}/claims")'):]
     assert 'assignment[2] not in ("ASSIGNED","RUNNING")' in claim
     assert 'assignment[3] not in ("QUEUED","RUNNING")' in claim
+
+
+def test_verified_reward_requires_claim_account_and_split_integrity():
+    api = __import__("pathlib").Path("backend/api.py").read_text()
+    verify = api[api.index('@app.post("/jobs/{job_id}/verify")'):]
+    assert 'if claimant_account != account_id:' in verify
+    assert 'Reward split integrity check failed' in verify
