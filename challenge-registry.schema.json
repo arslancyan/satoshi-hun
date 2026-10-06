@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "required": [
+    "id",
+    "title",
+    "type",
+    "reward_btc",
+    "balance_btc",
+    "status",
+    "rules",
+    "provenance",
+    "verification"
+  ],
+  "provenance": {
+    "url": "https://...",
+    "source_id": "stable-public-challenge-id",
+    "checked_at": "UTC ISO-8601"
+  },
+  "verification": {
+    "method": "published-rule-or-authoritative-verifier",
+    "source_id": "stable-public-challenge-id",
+    "checked_at": "UTC ISO-8601",
+    "fingerprint": "sha256"
+  },
+  "eligibility": {
+    "scope": "public-reward-challenge",
+    "required_status": "OPEN + FUNDED",
+    "requires_positive_balance": true,
+    "requires_provenance": true,
+    "requires_verification": true
+  }
+}
