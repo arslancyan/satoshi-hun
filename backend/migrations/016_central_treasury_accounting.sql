@@ -46,3 +46,17 @@ create table if not exists treasury_ledger (
 
 create index if not exists idx_treasury_ledger_created on treasury_ledger(wallet_id,created_at desc);
 create index if not exists idx_treasury_ledger_reference on treasury_ledger(reference_type,reference_id);
+
+insert into treasury_wallets(id,label,network,address,status)
+values(
+  '00000000-0000-0000-0000-000000000001',
+  'Satoshi Hunt BTC Treasury',
+  'bitcoin-mainnet',
+  'bc1ptstlyntypqqf8s5qz3jwcsrxw2pxqj634c7pklj2mjlvqwl22l6qqq8csl',
+  'ACTIVE'
+)
+on conflict (id) do update set address=excluded.address, network=excluded.network, status=excluded.status;
+
+insert into treasury_accounting(id)
+values('00000000-0000-0000-0000-000000000001')
+on conflict (id) do nothing;
