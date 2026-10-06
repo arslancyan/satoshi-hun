@@ -32,7 +32,7 @@ wid=worker["id"]; wt=worker["worker_token"]; aid=run["assignment_id"]; job=run["
 ok("start",*call("/assignments/"+aid+"/start","POST",worker=wt))
 ok("heartbeat",*call("/assignments/"+aid+"/heartbeat","POST",worker=wt))
 claim=ok("verify known solution",*call("/jobs/"+job+"/claims","POST",{"assignment_id":aid,"worker_id":wid,"candidate_hash":"b54609333c7f5082f8e8eb408e40a59d73e9fbe9f546c2adf75347cd941bd22d","result_status":"TESTED","cpu_seconds":1},worker=wt))
-if claim.get("verified") is not True: raise SystemExit(1)
+if claim.get("auto_verification",{}).get("verified") is not True: raise SystemExit(1)
 rewards=ok("reward",*call("/account/rewards",auth=session))
 if rewards["available_btc"] != 0: raise SystemExit(1)
 if not rewards["withdrawals"] or rewards["withdrawals"][0]["status"]!="QUEUED": raise SystemExit(1)
