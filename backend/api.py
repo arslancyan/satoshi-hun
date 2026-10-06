@@ -37,9 +37,17 @@ PAYOUT_WORKER_TOKEN = os.environ.get("PAYOUT_WORKER_TOKEN", "").strip()
 MAX_SINGLE_PAYOUT_BTC = Decimal(os.environ.get("MAX_SINGLE_PAYOUT_BTC", "0.001"))
 MAX_DAILY_PAYOUT_BTC = Decimal(os.environ.get("MAX_DAILY_PAYOUT_BTC", "0.005"))
 PAYOUT_RETRY_AFTER_MINUTES = max(5, int(os.environ.get("PAYOUT_RETRY_AFTER_MINUTES", "15")))
+TREASURY_BTC_ADDRESS = os.environ.get("TREASURY_BTC_ADDRESS", "bc1ptstlyntypqqf8s5qz3jwcsrxw2pxqj634c7pklj2mjlvqwl22l6qqq8csl").strip()
+TREASURY_WALLET_ID = UUID("00000000-0000-0000-0000-000000000001")
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.1")
+
+@app.on_event("startup")
+def validate_treasury_configuration():
+    if not valid_btc_mainnet_address(TREASURY_BTC_ADDRESS):
+        raise RuntimeError("TREASURY_BTC_ADDRESS is not a valid Bitcoin mainnet address")
+
 
 ALLOWED_FRONTEND_ORIGINS = list(dict.fromkeys(
     origin for origin in (FRONTEND_ORIGIN, "https://arslancyan.github.io") if origin
@@ -108,6 +116,28 @@ def db():
     if not DATABASE_URL:
         raise HTTPException(503, "DATABASE_URL is not configured")
     return psycopg.connect(DATABASE_URL)
+
+def treasury_available_btc(cur) -> Decimal:
+    cur.execute("select funded_btc-reserved_btc from treasury_accounting where id=%s for update", (TREASURY_WALLET_ID,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(503, "Treasury accounting is not initialized")
+    return Decimal(str(row[0]))
+
+def treasury_config(cur):
+    cur.execute("select address,network,status from treasury_wallets where id=%s", (TREASURY_WALLET_ID,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(503, "Treasury wallet is not initialized")
+    return {"address": row[0], "network": row[1], "status": row[2]}
+
+def treasury_ledger(cur, entry_type, amount, reference_type, reference_id=None, account_id=None, destination_btc_address=None):
+    cur.execute(
+        "insert into treasury_ledger(id,wallet_id,entry_type,amount_btc,reference_type,reference_id,account_id,destination_btc_address) "
+        "values(%s,%s,%s,%s,%s,%s,%s,%s)",
+        (uuid4(), TREASURY_WALLET_ID, entry_type, amount, reference_type,
+         str(reference_id) if reference_id else None, account_id, destination_btc_address),
+    )
 
 
 def record_audit_event(cur, event_type, entity_type, entity_id, account_id=None, worker_id=None, payload=None):
@@ -1660,6 +1690,10 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
     event=build_reward_event(account_id,job[0],job[3])
     if Decimal(str(event["worker_share_btc"])) + Decimal(str(event["platform_fee_btc"])) != Decimal(str(event["gross_reward_btc"])):
         raise HTTPException(500,"Reward split integrity check failed")
+    treasury_available = treasury_available_btc(cur)
+    gross_reward = Decimal(str(event["gross_reward_btc"]))
+    if treasury_available < gross_reward:
+        raise HTTPException(409, "Treasury is underfunded for this verified reward")
     reward_id=uuid4()
     cur.execute(
         "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id,approved_at) "
@@ -1671,6 +1705,13 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
     if not inserted:
         return {"verified":True,"already_credited":True}
     reward_id=inserted[0]
+    worker_share = Decimal(str(event["worker_share_btc"]))
+    owner_share = Decimal(str(event["platform_fee_btc"]))
+    cur.execute(
+        "update treasury_accounting set solver_liability_btc=solver_liability_btc+%s, owner_liability_btc=owner_liability_btc+%s, updated_at=now() where id=%s",
+        (worker_share, owner_share, TREASURY_WALLET_ID),
+    )
+    treasury_ledger(cur, "REWARD_LIABILITY", gross_reward, "REWARD_EVENT", reward_id, account_id=account_id)
     cur.execute(
         "insert into reward_balances(account_id,available_btc,updated_at) values(%s,%s,now()) "
         "on conflict(account_id) do update set available_btc=reward_balances.available_btc+excluded.available_btc,updated_at=now()",
@@ -1688,6 +1729,8 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
         "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) values(%s,%s,%s,'PLATFORM_FEE',%s,%s)",
         (uuid4(),account_id,reward_id,event["platform_fee_btc"],owner_address),
     )
+    treasury_ledger(cur, "OWNER_LIABILITY", owner_share, "REWARD_EVENT", reward_id,
+                    account_id=account_id, destination_btc_address=owner_address)
     withdrawal_queued=False
     cur.execute(
         "insert into notifications(id,account_id,event_type,title,message,metadata) "
@@ -1704,7 +1747,7 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
     record_audit_event(
         cur,"AUTO_REWARD_CREDITED","reward_event",reward_id,account_id,worker_id,
         {"job_id":str(job_id),"claim_id":str(claim_id),"worker_share_btc":event["worker_share_btc"],
-         "platform_fee_btc":event["platform_fee_btc"],"withdrawal_queued":withdrawal_queued,"custody":"none"},
+         "platform_fee_btc":event["platform_fee_btc"],"withdrawal_queued":withdrawal_queued,"treasury_address":TREASURY_BTC_ADDRESS,"custody":"central_treasury"},
     )
     return {
         "verified":True,"reward_id":str(reward_id),
@@ -1961,6 +2004,14 @@ def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: 
             row=cur.fetchone()
             if not row:
                 raise HTTPException(409,"Withdrawal is not queued or processing")
+            cur.execute(
+                "update treasury_accounting set reserved_btc=reserved_btc-%s,updated_at=now() where id=%s and reserved_btc >= %s",
+                (row[1], TREASURY_WALLET_ID, row[1]),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(409, "Treasury reservation is inconsistent")
+            treasury_ledger(cur, "USER_WITHDRAWAL_SETTLED", row[1], "WITHDRAWAL", withdrawal_id,
+                            account_id=row[0])
             record_audit_event(
                 cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,account_id,
                 payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),
@@ -2264,6 +2315,52 @@ def mark_notification_read(notification_id: UUID, request: Request, account_id: 
                 raise HTTPException(404, "Notification not found")
     return {"ok":True,"notification_id":str(notification_id),"read":True}
 
+@app.get("/account/treasury")
+def account_treasury():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cfg = treasury_config(cur)
+            cur.execute("select funded_btc,reserved_btc,solver_liability_btc,owner_liability_btc from treasury_accounting where id=%s", (TREASURY_WALLET_ID,))
+            row=cur.fetchone()
+    return {
+        "address": cfg["address"], "network": cfg["network"], "status": cfg["status"],
+        "funded_btc": float(row[0]), "reserved_btc": float(row[1]),
+        "solver_liability_btc": float(row[2]), "owner_liability_btc": float(row[3]),
+        "available_for_withdrawals_btc": float(Decimal(str(row[0]))-Decimal(str(row[1]))),
+    }
+
+class TreasuryFundingCreate(BaseModel):
+    amount_btc: float = Field(gt=0)
+    external_txid: str = Field(min_length=64, max_length=64)
+
+@app.post("/admin/treasury/funding")
+def record_treasury_funding(body: TreasuryFundingCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    if not validate_external_txid(body.external_txid):
+        raise HTTPException(422, "external_txid must be a 64-character Bitcoin transaction id")
+    payload=body.model_dump()
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute(
+                "insert into treasury_funding(id,wallet_id,amount_btc,external_txid,status) values(%s,%s,%s,%s,'CONFIRMED') returning id",
+                (uuid4(),TREASURY_WALLET_ID,Decimal(str(body.amount_btc)),body.external_txid.lower()),
+            )
+            funding_id=cur.fetchone()[0]
+            cur.execute("update treasury_accounting set funded_btc=funded_btc+%s,updated_at=now() where id=%s",
+                        (Decimal(str(body.amount_btc)),TREASURY_WALLET_ID))
+            treasury_ledger(cur,"FUNDING_CREDIT",Decimal(str(body.amount_btc)),"TREASURY_FUNDING",funding_id)
+            record_audit_event(cur,"TREASURY_FUNDED","treasury",TREASURY_WALLET_ID,account_id,
+                               payload={"amount_btc":str(body.amount_btc),"external_txid":body.external_txid.lower(),
+                                        "treasury_address":TREASURY_BTC_ADDRESS})
+            response={"funding_id":str(funding_id),"amount_btc":body.amount_btc,
+                      "treasury_address":TREASURY_BTC_ADDRESS,"status":"CONFIRMED"}
+            idempotency_store(cur,account_id,request,payload,response)
+            return response
+
 @app.get("/account/rewards")
 def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
@@ -2305,6 +2402,9 @@ def create_withdrawal(body: WithdrawalCreate, request: Request, account_id: UUID
             amount=Decimal(str(body.amount_btc))
             if amount > available:
                 raise HTTPException(400, "Withdrawal exceeds available reward balance")
+            treasury_available = treasury_available_btc(cur)
+            if treasury_available < amount:
+                raise HTTPException(409, "Treasury does not have enough unreserved funded BTC for this withdrawal")
             cur.execute(
                 "update reward_balances set available_btc=available_btc-%s,updated_at=now() where account_id=%s and available_btc >= %s",
                 (amount,account_id,amount),
@@ -2313,11 +2413,17 @@ def create_withdrawal(body: WithdrawalCreate, request: Request, account_id: UUID
                 raise HTTPException(409, "Reward balance changed; retry")
             wid=uuid4()
             cur.execute(
+                "update treasury_accounting set reserved_btc=reserved_btc+%s,solver_liability_btc=solver_liability_btc-%s,updated_at=now() where id=%s",
+                (amount,amount,TREASURY_WALLET_ID),
+            )
+            cur.execute(
                 "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) values(%s,%s,%s,%s,'QUEUED')",
                 (wid,account_id,amount,account[0]),
             )
-            record_audit_event(cur,"WITHDRAWAL_QUEUED","withdrawal",wid,account_id,payload={"amount_btc":str(amount),"payout_address_present":True,"custody":"none"})
-            response={"withdrawal_id":str(wid),"status":"QUEUED","amount_btc":float(amount),"custody":"non-custodial"}
+            treasury_ledger(cur, "USER_WITHDRAWAL_RESERVED", amount, "WITHDRAWAL", wid,
+                            account_id=account_id, destination_btc_address=account[0])
+            record_audit_event(cur,"WITHDRAWAL_QUEUED","withdrawal",wid,account_id,payload={"amount_btc":str(amount),"payout_address_present":True,"treasury_address":TREASURY_BTC_ADDRESS,"custody":"central_treasury"})
+            response={"withdrawal_id":str(wid),"status":"QUEUED","amount_btc":float(amount),"treasury_address":TREASURY_BTC_ADDRESS,"custody":"central_treasury"}
             idempotency_store(cur, account_id, request, payload, response)
             return response
 
