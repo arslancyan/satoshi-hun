@@ -9,3 +9,11 @@ def test_published_reward_supports_btc():
 
 def test_published_reward_supports_sats():
     assert _published_reward_sats({"prize":{"amount":20107284,"asset":"sats"}}) == 20107284
+
+from challenge_sources import _counts_toward_prize
+
+def test_non_prize_escrow_is_excluded():
+    assert not _counts_toward_prize({"label":"creator controlled; not counted as prize"})
+
+def test_live_prize_escrow_is_counted():
+    assert _counts_toward_prize({"label":"main", "expected":"1 BTC"})
