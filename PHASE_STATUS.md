@@ -28,12 +28,12 @@ Satoshi Hunt must not be presented as a live earning network until production in
 | 16 Anti-cheat / Sybil resistance | FOUNDATION DONE | Duplicate/range/proof integrity checks and security flags |
 | 17 Proof-of-contribution protocol | CORE DONE | Checkpoint hashes and work-proof ledger |
 | 18 Job checkpoint & resume | DONE | Server checkpoints and worker resume cursor |
-| 19 Worker crash recovery | FOUNDATION DONE | Existing expiry + resumable checkpoints |
+| 19 Worker crash recovery | FOUNDATION DONE | Existing expiry + resumable checkpoints + mobile resume transport |
 | 20 Challenge lifecycle automation | CORE DONE | Publish/pause controls and scheduler gating |
 | 21 Challenge source adapters | FOUNDATION DONE | Adapter SDK and server ingestion contract |
 | 22 Public Audit Explorer | DONE | Public audit explorer API and UI |
 | 23 Analytics / operator dashboard | FOUNDATION DONE | Network, reputation, marketplace telemetry |
-| 24 Beta/release engineering | FOUNDATION DONE | Staging runbook, load-test plan, readiness endpoint |
+| 24 Beta/release engineering | FOUNDATION DONE | Staging runbook, load-test plan, readiness endpoint, minimum-cost beta deployment path |
 | 25 Contribution marketplace | FOUNDATION DONE | Published challenge offers |
 | 26 Intelligent scheduler | FOUNDATION DONE | Capability + reputation scoring |
 | 27 Proof-of-Contribution Protocol | CORE DONE | Hash-chained audit + checkpoint proof records |
