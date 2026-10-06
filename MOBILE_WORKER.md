@@ -85,3 +85,20 @@ Before a public BTC reward challenge is enabled, Satoshi Hunt still needs:
 5. Manual owner-gated reward settlement.
 
 This preserves the existing safety and economic model while making the worker transport mobile-friendly.
+
+
+## Safe demo protocol
+
+The mobile worker's demo claim flow is **disabled by default**. This is intentional: a mobile client must never submit a fabricated demo candidate to a real reward assignment.
+
+For a controlled beta protocol test only, enable:
+
+```bash
+export SATOSHI_HUNT_MOBILE_DEMO=1
+```
+
+Use this only with a dedicated test challenge/database. It is not a BTC solver.
+
+For a real public challenge, the mobile worker should remain in transport/orchestration mode until a reviewed challenge-specific adapter is installed. The adapter must produce a candidate that the server can independently verify.
+
+All POST requests receive an idempotency key generated once per API call, so a retry can reuse the same logical request rather than creating a second mutation.
