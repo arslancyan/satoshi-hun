@@ -18,6 +18,7 @@ import random
 import time
 import urllib.error
 import urllib.request
+import uuid
 from urllib.parse import urlparse
 
 API_BASE = os.environ.get("SATOSHI_HUNT_API", "").rstrip("/")
@@ -28,6 +29,7 @@ POLL_ACTIVE = max(5, int(os.environ.get("SATOSHI_HUNT_MOBILE_ACTIVE_POLL_SECONDS
 HEARTBEAT_SECONDS = max(20, int(os.environ.get("SATOSHI_HUNT_MOBILE_HEARTBEAT_SECONDS", "30")))
 MAX_BACKOFF = max(60, int(os.environ.get("SATOSHI_HUNT_MOBILE_MAX_BACKOFF_SECONDS", "300")))
 RUN_ONCE = os.environ.get("SATOSHI_HUNT_MOBILE_RUN_ONCE", "").lower() in ("1", "true", "yes")
+DEMO_MODE = os.environ.get("SATOSHI_HUNT_MOBILE_DEMO", "").lower() in ("1", "true", "yes")
 
 
 def validate_config():
@@ -42,15 +44,15 @@ def validate_config():
 
 def api_json(path, method="GET", payload=None):
     data = None if payload is None else json.dumps(payload).encode()
+    request_id = str(uuid.uuid4()) if method != "GET" else ""
+    headers = {"Authorization": "Worker " + API_TOKEN, "Content-Type": "application/json"}
+    if request_id:
+        headers["Idempotency-Key"] = request_id
     req = urllib.request.Request(
         API_BASE + path,
         data=data,
         method=method,
-        headers={
-            "Authorization": "Worker " + API_TOKEN,
-            "Content-Type": "application/json",
-            "User-Agent": "SatoshiHunt-MobileWorker/1.0",
-        },
+        headers={**headers, "User-Agent": "SatoshiHunt-MobileWorker/1.0"},
     )
     with urllib.request.urlopen(req, timeout=20) as response:  # nosec B310
         return json.loads(response.read().decode())
@@ -88,6 +90,10 @@ def work_assignment(item):
     assignment_id = item["id"]
     job_id = item["job_id"]
     puzzle_id = item.get("puzzle_id", "?")
+
+    if not DEMO_MODE:
+        print(f"[#{puzzle_id}] assignment detected but no mobile adapter is enabled; leaving it unstarted.")
+        return False
 
     if item.get("status") == "ASSIGNED":
         api_call(f"/assignments/{assignment_id}/start")
@@ -135,6 +141,7 @@ def run():
     print("API:", API_BASE)
     print("Worker:", WORKER_ID)
     print("Battery-friendly polling:", POLL_IDLE, "s idle /", POLL_ACTIVE, "s active")
+    print("Demo protocol:", "ENABLED" if DEMO_MODE else "disabled (safe default)")
 
     backoff = POLL_IDLE
     last_heartbeat = 0.0
