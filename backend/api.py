@@ -304,7 +304,7 @@ def complete_assignment(assignment_id: UUID, request: Request, account_id: UUID 
             cur.execute("select extract(epoch from (%s-started_at))::bigint from job_assignments where id=%s",(now,assignment_id))
             seconds=max(0,int(cur.fetchone()[0] or 0))
             cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s",(now,now,seconds,assignment_id))
-            cur.execute("update jobs set status='VERIFIED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
+            cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
             cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
     return {"assignment_id":str(assignment_id),"status":"COMPLETED","verified_seconds":seconds}
 
@@ -323,6 +323,12 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, account_id: UUID = 
             except psycopg.errors.UniqueViolation:
                 conn.rollback()
                 return {"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
+            if body.result_status == "VERIFIED":
+                cur.execute(
+                    "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) "
+                    "where id=%s and status in ('RUNNING','COMPLETED')",
+                    (job_id,),
+                )
     return {"accepted":True,"claim_id":str(cid),"result_status":body.result_status}
 
 
