@@ -99,6 +99,10 @@ def work_assignment(item):
         api_call(f"/assignments/{assignment_id}/start")
         print(f"[#{puzzle_id}] started")
 
+    resume = api_call(f"/assignments/{assignment_id}/resume")
+    resume_cursor = resume.get("resume_cursor")
+    print(f"[#{puzzle_id}] resume cursor:", resume_cursor)
+
     # A server-owned assignment is resumable: reconnecting simply re-reads
     # the assignment state instead of creating a second assignment locally.
     last_heartbeat = 0.0
@@ -112,6 +116,16 @@ def work_assignment(item):
         if now - last_heartbeat >= HEARTBEAT_SECONDS:
             api_call(f"/assignments/{assignment_id}/heartbeat")
             last_heartbeat = now
+        api_call(
+            f"/assignments/{assignment_id}/checkpoint",
+            "POST",
+            {
+                "cursor_start": 0,
+                "cursor_end": 100,
+                "cursor_next": progress + 1,
+                "nonce": f"mobile-demo-{progress}",
+            },
+        )
         print(f"[#{puzzle_id}] mobile public-challenge pass {progress}%")
         if progress < 100:
             time.sleep(1)
