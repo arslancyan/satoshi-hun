@@ -13,9 +13,8 @@ new='''            cur.execute("select id,status from job_assignments where job_
                 idempotency_store(cur,account_id,request,payload,response)
                 return response
             capacity=economic_capacity(cur,job_id)'''
-if old not in s:
-    raise SystemExit("run challenge patch target not found")
-s=s.replace(old,new,1)
+if old in s:
+    s=s.replace(old,new,1)
 
 old2='''    cur.execute(
         "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",
@@ -39,3 +38,15 @@ if old2 not in s:
     raise SystemExit("reward patch target not found")
 s=s.replace(old2,new2,1)
 p.write_text(s)
+
+
+# Ensure paused-assignment schema exists on existing production databases.
+import psycopg
+from os import environ
+_db=environ.get("DATABASE_URL","")
+if _db:
+    with psycopg.connect(_db) as conn:
+        with conn.cursor() as cur:
+            cur.execute("alter table job_assignments drop constraint if exists job_assignments_status_check")
+            cur.execute("alter table job_assignments add constraint job_assignments_status_check check (status in ('ASSIGNED','RUNNING','PAUSED','COMPLETED','RELEASED','EXPIRED'))")
+            cur.execute("create index if not exists idx_assignments_paused on job_assignments(worker_id,status,assigned_at desc) where status='PAUSED'")
