@@ -441,9 +441,14 @@ def public_job_audit(job_id: UUID):
             assignments,seconds=cur.fetchone()
             cur.execute("select count(*),count(*) filter (where result_status='VERIFIED'),count(*) filter (where result_status='REJECTED') from work_claims where job_id=%s", (job_id,))
             claims,verified,rejected=cur.fetchone()
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select event_type,entity_type,entity_id,worker_id,payload,previous_hash,event_hash,created_at from audit_events where entity_type='job' and entity_id=%s order by created_at asc,id asc", (str(job_id),))
+            events=cur.fetchall()
     return {"job_id":str(job[0]),"puzzle_id":job[1],"status":job[2],"created_at":job[3],"completed_at":job[4],
             "completed_assignments":assignments,"contribution_seconds":seconds,"claims":claims,
-            "verified_claims":verified,"rejected_claims":rejected}
+            "verified_claims":verified,"rejected_claims":rejected,
+            "audit_events":[{"event_type":e[0],"entity_type":e[1],"entity_id":e[2],"worker_id":str(e[3]) if e[3] else None,"payload":e[4],"previous_hash":e[5],"event_hash":e[6],"created_at":e[7]} for e in events]}
 
 
 @app.get("/audit/account")
