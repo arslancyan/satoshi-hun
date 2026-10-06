@@ -1959,6 +1959,104 @@ def require_payout_signer(request: Request):
     if not hmac.compare_digest(supplied, PAYOUT_SIGNER_TOKEN):
         raise HTTPException(401, "Invalid payout signer credential")
 
+def _read_varint(buf, offset):
+    if offset >= len(buf):
+        raise ValueError("truncated varint")
+    n = buf[offset]
+    offset += 1
+    if n < 0xfd:
+        return n, offset
+    size = {0xfd: 2, 0xfe: 4, 0xff: 8}[n]
+    if offset + size > len(buf):
+        raise ValueError("truncated varint")
+    return int.from_bytes(buf[offset:offset + size], "little"), offset + size
+
+def _tx_outputs(tx_hex: str):
+    try:
+        raw = bytes.fromhex(tx_hex)
+        off = 4
+        vin_count, off = _read_varint(raw, off)
+        segwit = vin_count == 0
+        if segwit:
+            if off + 2 > len(raw) or raw[off] != 1:
+                raise ValueError("invalid segwit marker")
+            off += 2
+            vin_count, off = _read_varint(raw, off)
+        for _ in range(vin_count):
+            if off + 36 > len(raw): raise ValueError("truncated input")
+            off += 36
+            n, off = _read_varint(raw, off); off += n + 4
+            if off > len(raw): raise ValueError("truncated input")
+        vout_count, off = _read_varint(raw, off)
+        outputs=[]
+        for _ in range(vout_count):
+            if off + 8 > len(raw): raise ValueError("truncated output")
+            amount=int.from_bytes(raw[off:off+8],"little"); off += 8
+            n, off = _read_varint(raw, off)
+            script=raw[off:off+n]; off += n
+            outputs.append((amount, script))
+        if segwit:
+            for _ in range(vin_count):
+                n, off = _read_varint(raw, off)
+                for __ in range(n):
+                    ln, off = _read_varint(raw, off); off += ln
+        if off + 4 != len(raw): raise ValueError("unexpected transaction trailing data")
+        return raw, outputs
+    except (ValueError, IndexError, KeyError) as exc:
+        raise HTTPException(422, f"Invalid Bitcoin transaction: {exc}")
+
+def _scriptpubkey_for_mainnet_address(address: str) -> bytes:
+    value=address.strip()
+    if _base58check_valid(value):
+        n=0
+        for ch in value: n=n*58+BASE58_ALPHABET.index(ch)
+        raw=n.to_bytes((n.bit_length()+7)//8,"big") if n else b""
+        leading=len(value)-len(value.lstrip("1")); raw=b"\\x00"*leading+raw
+        payload=raw[:-4]; version=payload[0]; h=payload[1:]
+        if version == 0 and len(h) in (20,32): return bytes([0,len(h)])+h
+        if version == 5 and len(h) == 20: return b"\\xa9\\x14"+h+b"\\x87"
+        raise HTTPException(422,"Unsupported payout address type")
+    a=value.lower(); pos=a.rfind("1")
+    data=[BECH32_CHARSET.index(ch) for ch in a[pos+1:]]
+    payload=_convertbits(data[1:-6],5,8,False); version=data[0]
+    h=bytes(payload)
+    if version == 0 and len(h) in (20,32): return bytes([0,len(h)])+h
+    if version == 1 and len(h)==32: return b"\\x51\\x20"+h
+    raise HTTPException(422,"Unsupported payout address type")
+
+def _psbt_unsigned_tx(psbt_text: str) -> bytes:
+    try:
+        raw=base64.b64decode(psbt_text, validate=True)
+        if not raw.startswith(b"psbt\\xff"): raise ValueError("invalid PSBT magic")
+        off=5
+        while True:
+            klen,off=_read_varint(raw,off)
+            if klen == 0: break
+            if off+klen > len(raw): raise ValueError("truncated global key")
+            key=raw[off:off+klen]; off += klen
+            vlen,off=_read_varint(raw,off)
+            if off+vlen > len(raw): raise ValueError("truncated global value")
+            val=raw[off:off+vlen]; off += vlen
+            if key == b"\\x00": return val
+        raise ValueError("PSBT does not contain a global unsigned transaction")
+    except (ValueError, IndexError) as exc:
+        raise HTTPException(422, f"Invalid PSBT: {exc}")
+
+def _payout_digest(amount_btc, destination, tx_bytes):
+    amount_sat=int(Decimal(str(amount_btc))*Decimal("100000000"))
+    return hashlib.sha256(json.dumps(
+        {"amount_sat":amount_sat,"destination":destination,"unsigned_tx":base64.b64encode(tx_bytes).decode()},
+        sort_keys=True,separators=(",",":")).encode()).hexdigest()
+
+def _verify_payout_transaction(tx_hex, amount_btc, destination):
+    raw,outputs=_tx_outputs(tx_hex)
+    expected_script=_scriptpubkey_for_mainnet_address(destination)
+    amount_sat=int(Decimal(str(amount_btc))*Decimal("100000000"))
+    if sum(n for n,script in outputs if script == expected_script) != amount_sat:
+        raise HTTPException(422,"Signed transaction does not pay the exact withdrawal amount to the destination")
+    txid=hashlib.sha256(hashlib.sha256(raw).digest()).digest()[::-1].hex()
+    return txid,raw
+
 def validate_psbt_text(value: str) -> str:
     try:
         raw = base64.b64decode(value, validate=True)
@@ -2070,6 +2168,16 @@ def submit_signed_psbt(withdrawal_id: UUID, body: SignedPayout, request: Request
             if not row: raise HTTPException(404,"Payout settlement not found")
             if row[1] != "PSBT_READY": raise HTTPException(409,"Settlement is not ready for signing")
             if not row[2]: raise HTTPException(409,"Unsigned PSBT is missing")
+            signed_unsigned_tx=_psbt_unsigned_tx(signed)
+            original_unsigned_tx=_psbt_unsigned_tx(row[2])
+            if signed_unsigned_tx != original_unsigned_tx:
+                raise HTTPException(422,"Signed PSBT does not match the approved unsigned transaction")
+            digest=_payout_digest(row[3],row[4],signed_unsigned_tx)
+            cur.execute("select payout_digest from payout_settlements where id=%s",(row[0],))
+            stored_digest=cur.fetchone()[0]
+            if not stored_digest or not hmac.compare_digest(stored_digest,digest):
+                raise HTTPException(409,"Payout intent digest mismatch")
+            computed_txid,_=_verify_payout_transaction(body.final_tx_hex,row[3],row[4])
             cur.execute(
                 "update payout_settlements set signed_psbt=%s,signed_tx_hex=%s,signer_id=%s,status='SIGNED',signed_at=now(),updated_at=now() where id=%s",
                 (signed,body.final_tx_hex,body.signer_id,row[0]),
@@ -2204,360 +2312,7 @@ def payout_worker_next(request: Request):
 
 
 @app.post("/internal/payouts/{withdrawal_id}/complete")
-def payout_worker_complete(withdrawal_id: UUID, body: WithdrawalComplete, request: Request):
+def payout_worker_complete_legacy_blocked(withdrawal_id: UUID, request: Request):
     require_payout_worker(request)
-    if not validate_external_txid(body.external_reference):
-        raise HTTPException(422, "external_reference must be a 64-character Bitcoin transaction id")
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
-                "where id=%s and status='PROCESSING' returning account_id,amount_btc",
-                (body.external_reference.strip(),withdrawal_id),
-            )
-            row=cur.fetchone()
-            if not row:
-                raise HTTPException(409,"Withdrawal is not processing")
-            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,row[0],
-                payload={"amount_btc":str(row[1]),"external_reference":body.external_reference.strip(),"custody":"none"})
-            return {"withdrawal_id":str(withdrawal_id),"status":"PAID",
-                    "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
-
-
-@app.get("/network/economics")
-def network_economics():
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("select count(*) from workers where status='ACTIVE'")
-            active_workers = cur.fetchone()[0]
-            cur.execute("select count(*) from job_assignments where status in ('ASSIGNED','RUNNING')")
-            active_assignments = cur.fetchone()[0]
-            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where period_start=current_date")
-            daily_seconds = int(cur.fetchone()[0] or 0)
-            cur.execute("select count(*) from jobs where status='QUEUED' and scope='public-reward-challenge'")
-            queued_jobs = cur.fetchone()[0]
-            cur.execute("select count(*) from challenge_registry where status='OPEN + FUNDED' and balance_btc > 0")
-            funded_challenges = cur.fetchone()[0]
-    return {
-        "active_workers": active_workers,
-        "active_assignments": active_assignments,
-        "daily_worker_hours": round(daily_seconds / 3600, 4),
-        "queued_jobs": queued_jobs,
-        "funded_challenges": funded_challenges,
-        "allocation_policy": {
-            "max_active_assignments": MAX_ACTIVE_ASSIGNMENTS,
-            "max_active_assignments_per_job": MAX_ACTIVE_ASSIGNMENTS_PER_JOB,
-            "max_network_worker_hours_per_day": MAX_NETWORK_WORKER_HOURS_PER_DAY,
-            "compute_location": "worker_device",
-            "platform_compute_payout_obligation": "none_without_verified_reward"
-        }
-    }
-
-@app.get("/audit/account")
-def audit_account(account_id: UUID = Depends(account_id_from_auth)):
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("select count(*) from workers where account_id=%s",(account_id,))
-            workers=cur.fetchone()[0]
-            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where account_id=%s",(account_id,))
-            seconds=cur.fetchone()[0]
-            cur.execute("select count(*) from reward_events where account_id=%s and settlement_status in ('APPROVED','SETTLED')",(account_id,))
-            rewards=cur.fetchone()[0]
-            cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='VERIFIED'",(account_id,))
-            verified_claims=cur.fetchone()[0]
-            cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='REJECTED'",(account_id,))
-            rejected_claims=cur.fetchone()[0]
-    reliability=round((verified_claims/(verified_claims+rejected_claims))*100,2) if verified_claims+rejected_claims else 0.0
-    return {"workers":workers,"contributed_worker_seconds":seconds,"approved_reward_events":rewards,"verified_claims":verified_claims,"rejected_claims":rejected_claims,"reliability_score":reliability}
-
-
-@app.post("/jobs/{job_id}/verify")
-def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    """Run the registered server-side adapter against submitted candidate hashes."""
-    enforce_rate_limit(request, "write")
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "select j.id,j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification "
-                "from jobs j join challenge_registry c on c.id=j.puzzle_id "
-                "where j.id=%s and j.scope='public-reward-challenge' for update",
-                (job_id,),
-            )
-            job = cur.fetchone()
-            if not job:
-                raise HTTPException(404, "Job or challenge registry entry not found")
-            if job[2] not in ("COMPLETED","RUNNING"):
-                raise HTTPException(409, f"Job is {job[2]}")
-            record = {
-                "id": job[1], "type": job[3], "reward_btc": job[4],
-                "balance_btc": job[5], "status": job[6], "rules": job[7],
-                "provenance": job[8], "verification": job[9],
-            }
-            cur.execute(
-                "select c.id,c.worker_id,c.candidate_hash,w.account_id "
-                "from work_claims c join workers w on w.id=c.worker_id "
-                "where c.job_id=%s and c.result_status='TESTED' "
-                "and w.account_id=%s order by c.finished_at asc for update",
-                (job_id, account_id),
-            )
-            claims = cur.fetchall()
-            if not claims:
-                raise HTTPException(404, "No TESTED claim is available for this account")
-            for claim_id, worker_id, candidate_hash, claimant_account in claims:
-                result = verify_candidate_hash(record, candidate_hash)
-                if not result["verified"]:
-                    cur.execute(
-                        "update work_claims set result_status='REJECTED' where id=%s and result_status='TESTED'",
-                        (claim_id,),
-                    )
-                    continue
-                cur.execute(
-                    "update work_claims set result_status='VERIFIED' where id=%s and result_status='TESTED'",
-                    (claim_id,),
-                )
-                if cur.rowcount != 1:
-                    continue
-                cur.execute(
-                    "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",
-                    (job_id,),
-                )
-                if claimant_account != account_id:
-                    raise HTTPException(403, "Verified claim account mismatch")
-                event = build_reward_event(account_id, job[1], job[4])
-                if Decimal(str(event["worker_share_btc"])) + Decimal(str(event["platform_fee_btc"])) != Decimal(str(event["gross_reward_btc"])):
-                    raise HTTPException(500, "Reward split integrity check failed")
-                reward_id = uuid4()
-                cur.execute(
-                    "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id,approved_at) "
-                    "values(%s,%s,%s,%s,%s,%s,'APPROVED',%s,now()) "
-                    "on conflict (puzzle_id,account_id) where settlement_status <> 'VOID' do nothing "
-                    "returning id",
-                    (reward_id, account_id, job[1], event["gross_reward_btc"], event["worker_share_btc"], event["platform_fee_btc"], claim_id),
-                )
-                inserted_reward = cur.fetchone()
-                if inserted_reward:
-                    reward_id = inserted_reward[0]
-                    cur.execute(
-                        "insert into reward_balances(account_id,available_btc,updated_at) values(%s,%s,now()) "
-                        "on conflict(account_id) do update set available_btc=reward_balances.available_btc+excluded.available_btc,updated_at=now()",
-                        (account_id, event["worker_share_btc"]),
-                    )
-                    cur.execute(
-                        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc) "
-                        "values(%s,%s,%s,'WORKER_CREDIT',%s) on conflict(reward_event_id,entry_type) do nothing",
-                        (uuid4(), account_id, reward_id, event["worker_share_btc"]),
-                    )
-                    cur.execute(
-                        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) "
-                        "values(%s,%s,%s,'PLATFORM_FEE',%s,%s) on conflict(reward_event_id,entry_type) do nothing",
-                        (uuid4(), account_id, reward_id, event["platform_fee_btc"], OWNER_PLATFORM_FEE_BTC_ADDRESS),
-                    )
-                    cur.execute("select btc_payout_address from accounts where id=%s for update", (account_id,))
-                    payout_row = cur.fetchone()
-                    if payout_row and payout_row[0]:
-                        cur.execute(
-                            "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
-                            "where account_id=%s and available_btc >= %s",
-                            (event["worker_share_btc"], account_id, event["worker_share_btc"]),
-                        )
-                        if cur.rowcount != 1:
-                            raise HTTPException(500, "Reward balance reservation failed")
-                        cur.execute(
-                            "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) "
-                            "values(%s,%s,%s,%s,'QUEUED')",
-                            (uuid4(), account_id, event["worker_share_btc"], payout_row[0]),
-                        )
-                        withdrawal_queued = True
-                    else:
-                        withdrawal_queued = False
-                else:
-                    cur.execute(
-                        "select id from reward_events where puzzle_id=%s and account_id=%s and settlement_status <> 'VOID' "
-                        "order by created_at desc limit 1 for update",
-                        (job[1], account_id),
-                    )
-                    existing_reward = cur.fetchone()
-                    reward_id = existing_reward[0] if existing_reward else reward_id
-                    withdrawal_queued = False
-                record_audit_event(
-                    cur,"VERIFIED","job",job_id,account_id,worker_id,
-                    {"candidate_hash":candidate_hash,"reward_status":"APPROVED","auto_credit":"worker_share","withdrawal_queued":withdrawal_queued,"auto_credited":True}
-                )
-                return {"verified":True,"claim_id":str(claim_id),"candidate_hash":candidate_hash,
-                        "reward_status":"APPROVED","reward_id":str(reward_id),
-                        "worker_credit_btc":event["worker_share_btc"],"platform_fee_btc":event["platform_fee_btc"],
-                        "withdrawal_queued":withdrawal_queued}
-    raise HTTPException(422, "All submitted candidates were rejected by the challenge adapter.")
-
-class PayoutAddressUpdate(BaseModel):
-    btc_payout_address: str = Field(min_length=14, max_length=128)
-
-
-class WithdrawalCreate(BaseModel):
-    amount_btc: float = Field(gt=0)
-
-
-@app.put("/account/payout-address")
-def update_payout_address(body: PayoutAddressUpdate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    payload=body.model_dump()
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay=idempotency_replay(cur, account_id, request, payload)
-            if replay is not None:
-                return replay
-            address = body.btc_payout_address.strip()
-            if not valid_btc_mainnet_address(address):
-                raise HTTPException(422, "Invalid Bitcoin mainnet payout address")
-            cur.execute("update accounts set btc_payout_address=%s where id=%s", (address, account_id))
-            if cur.rowcount != 1:
-                raise HTTPException(404, "Account not found")
-            record_audit_event(cur,"PAYOUT_ADDRESS_UPDATED","account",account_id,account_id,payload={"address_present":True})
-            response={"ok":True,"payout_address_set":True,"address_type":"validated_mainnet_btc"}
-            idempotency_store(cur, account_id, request, payload, response)
-            return response
-
-
-
-@app.get("/account/notifications")
-def account_notifications(account_id: UUID = Depends(account_id_from_auth)):
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "select id,event_type,title,message,metadata,read_at,created_at "
-                "from notifications where account_id=%s order by created_at desc limit 50",
-                (account_id,),
-            )
-            rows=cur.fetchall()
-    return {"notifications":[
-        {"id":str(r[0]),"event_type":r[1],"title":r[2],"message":r[3],
-         "metadata":r[4],"read_at":r[5],"created_at":r[6]}
-        for r in rows
-    ]}
-
-@app.post("/account/notifications/{notification_id}/read")
-def mark_notification_read(notification_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "update notifications set read_at=coalesce(read_at,now()) "
-                "where id=%s and account_id=%s returning id",
-                (notification_id, account_id),
-            )
-            if not cur.fetchone():
-                raise HTTPException(404, "Notification not found")
-    return {"ok":True,"notification_id":str(notification_id),"read":True}
-
-@app.get("/account/treasury")
-def account_treasury():
-    with db() as conn:
-        with conn.cursor() as cur:
-            cfg = treasury_config(cur)
-            cur.execute("select funded_btc,reserved_btc,solver_liability_btc,owner_liability_btc from treasury_accounting where id=%s", (TREASURY_WALLET_ID,))
-            row=cur.fetchone()
-    return {
-        "address": cfg["address"], "network": cfg["network"], "status": cfg["status"],
-        "funded_btc": float(row[0]), "reserved_btc": float(row[1]),
-        "solver_liability_btc": float(row[2]), "owner_liability_btc": float(row[3]),
-        "available_for_withdrawals_btc": float(Decimal(str(row[0]))-Decimal(str(row[1]))),
-    }
-
-class TreasuryFundingCreate(BaseModel):
-    amount_btc: float = Field(gt=0)
-    external_txid: str = Field(min_length=64, max_length=64)
-
-@app.post("/admin/treasury/funding")
-def record_treasury_funding(body: TreasuryFundingCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    if not validate_external_txid(body.external_txid):
-        raise HTTPException(422, "external_txid must be a 64-character Bitcoin transaction id")
-    payload=body.model_dump()
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay=idempotency_replay(cur, account_id, request, payload)
-            if replay is not None:
-                return replay
-            require_owner(cur, account_id)
-            cur.execute(
-                "insert into treasury_funding(id,wallet_id,amount_btc,external_txid,status) values(%s,%s,%s,%s,'CONFIRMED') returning id",
-                (uuid4(),TREASURY_WALLET_ID,Decimal(str(body.amount_btc)),body.external_txid.lower()),
-            )
-            funding_id=cur.fetchone()[0]
-            cur.execute("update treasury_accounting set funded_btc=funded_btc+%s,updated_at=now() where id=%s",
-                        (Decimal(str(body.amount_btc)),TREASURY_WALLET_ID))
-            treasury_ledger(cur,"FUNDING_CREDIT",Decimal(str(body.amount_btc)),"TREASURY_FUNDING",funding_id)
-            record_audit_event(cur,"TREASURY_FUNDED","treasury",TREASURY_WALLET_ID,account_id,
-                               payload={"amount_btc":str(body.amount_btc),"external_txid":body.external_txid.lower(),
-                                        "treasury_address":TREASURY_BTC_ADDRESS})
-            response={"funding_id":str(funding_id),"amount_btc":body.amount_btc,
-                      "treasury_address":TREASURY_BTC_ADDRESS,"status":"CONFIRMED"}
-            idempotency_store(cur,account_id,request,payload,response)
-            return response
-
-@app.get("/account/rewards")
-def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("select available_btc from reward_balances where account_id=%s", (account_id,))
-            balance=cur.fetchone()
-            cur.execute(
-                "select id,amount_btc,payout_address,status,external_reference,created_at,processed_at "
-                "from withdrawal_requests where account_id=%s order by created_at desc limit 50",
-                (account_id,),
-            )
-            withdrawals=cur.fetchall()
-    return {
-        "available_btc": float(balance[0]) if balance else 0.0,
-        "withdrawals":[
-            {"id":str(r[0]),"amount_btc":float(r[1]),"payout_address":r[2],"status":r[3],
-             "external_reference":r[4],"created_at":r[5],"processed_at":r[6]}
-            for r in withdrawals
-        ],
-    }
-
-
-@app.post("/account/withdrawals")
-def create_withdrawal(body: WithdrawalCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    payload=body.model_dump()
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay=idempotency_replay(cur, account_id, request, payload)
-            if replay is not None:
-                return replay
-            cur.execute("select btc_payout_address from accounts where id=%s for update", (account_id,))
-            account=cur.fetchone()
-            if not account or not account[0]:
-                raise HTTPException(409, "Set a BTC payout address before withdrawing")
-            cur.execute("select available_btc from reward_balances where account_id=%s for update", (account_id,))
-            row=cur.fetchone()
-            available=Decimal(str(row[0] if row else 0))
-            amount=Decimal(str(body.amount_btc))
-            if amount > available:
-                raise HTTPException(400, "Withdrawal exceeds available reward balance")
-            treasury_available = treasury_available_btc(cur)
-            if treasury_available < amount:
-                raise HTTPException(409, "Treasury does not have enough unreserved funded BTC for this withdrawal")
-            cur.execute(
-                "update reward_balances set available_btc=available_btc-%s,updated_at=now() where account_id=%s and available_btc >= %s",
-                (amount,account_id,amount),
-            )
-            if cur.rowcount != 1:
-                raise HTTPException(409, "Reward balance changed; retry")
-            wid=uuid4()
-            cur.execute(
-                "update treasury_accounting set reserved_btc=reserved_btc+%s,solver_liability_btc=solver_liability_btc-%s,updated_at=now() where id=%s",
-                (amount,amount,TREASURY_WALLET_ID),
-            )
-            cur.execute(
-                "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) values(%s,%s,%s,%s,'QUEUED')",
-                (wid,account_id,amount,account[0]),
-            )
-            treasury_ledger(cur, "USER_WITHDRAWAL_RESERVED", amount, "WITHDRAWAL", wid,
-                            account_id=account_id, destination_btc_address=account[0])
-            record_audit_event(cur,"WITHDRAWAL_QUEUED","withdrawal",wid,account_id,payload={"amount_btc":str(amount),"payout_address_present":True,"treasury_address":TREASURY_BTC_ADDRESS,"custody":"central_treasury"})
-            response={"withdrawal_id":str(wid),"status":"QUEUED","amount_btc":float(amount),"treasury_address":TREASURY_BTC_ADDRESS,"custody":"central_treasury"}
-            idempotency_store(cur, account_id, request, payload, response)
-            return response
+    raise HTTPException(410, "Legacy payout completion is disabled. Use the secure PSBT settlement rail.")
 
