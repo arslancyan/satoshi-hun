@@ -13,7 +13,7 @@ Implemented: ChallengeAdapter contract, server-side candidate-hash verification,
 
 ## 4. Tests and race protection
 Implemented: registry eligibility tests, canonical fingerprint tests, provenance/verification gating, database locking, unique active-assignment constraint, PostgreSQL CI service, and concurrent assignment tests.
-Remaining: staging load tests and worker-token replay coverage; account-authenticated mutation idempotency is now wired across worker capabilities, creator/admin mutations, scheduling, reward review, and community allocation flows.
+Remaining: staging load tests and broader integration coverage; worker-token mutation idempotency is now wired for checkpoint, resume, start, heartbeat, completion, and claim flows using worker-scoped keys. Account-authenticated mutation idempotency remains wired across worker capabilities, creator/admin mutations, scheduling, reward review, and community allocation flows.
 
 ## 5. Public audit
 Implemented: /audit/job/{job_id}; account contribution audit; verified/rejected claim counts; contribution seconds.
@@ -35,7 +35,7 @@ Frontend already exposes worker/network concepts. Production requirement: replac
 Implemented in code: Redis-capable shared rate limiter, PostgreSQL integration CI, and server-side challenge ingestion. Production requirement: configure shared Redis, PostgreSQL/Neon with TLS, HTTPS, exact frontend origin, backups, monitoring, and secret rotation. Production requirement: use a shared rate-limit store or gateway; deploy PostgreSQL/Neon with TLS; configure HTTPS and exact frontend origin; rotate secrets and keep them server-side.
 
 ## 11. Production security audit
-Required before real rewards: secret scanning; external JWT/session review; replay protection; idempotency; concurrency tests; CORS/CSP review; database migration review; abuse/rate-limit testing; challenge provenance review. Current hardening also rejects missing JWT secrets explicitly, allows `Idempotency-Key` through CORS, and caps cumulative community allocations to the source reward's platform fee.
+Required before real rewards: secret scanning; external JWT/session review; replay protection; idempotency; concurrency tests; CORS/CSP review; database migration review; abuse/rate-limit testing; challenge provenance review. Current hardening also rejects missing JWT secrets explicitly, allows `Idempotency-Key` through CORS, permits PUT for capability updates, uses worker-scoped replay protection, and caps cumulative community allocations to the source reward's platform fee.
 
 ## 12. Challenge onboarding and launch
 Registry contract is defined in challenge-registry.schema.json.
