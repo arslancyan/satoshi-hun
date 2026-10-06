@@ -793,12 +793,30 @@ def revoke_worker(worker_id: UUID, request: Request, account_id: UUID = Depends(
             replay = idempotency_replay(cur, account_id, request, payload)
             if replay is not None:
                 return replay
-            cur.execute("update workers set status='REVOKED',token_hash=null where id=%s and account_id=%s returning id", (worker_id, account_id))
+            cur.execute("select id from workers where id=%s and account_id=%s for update", (worker_id, account_id))
             row=cur.fetchone()
             if not row:
                 raise HTTPException(404, "Worker not found")
-            record_audit_event(cur,"REVOKED","worker",worker_id,account_id,worker_id,{"reason":"account_requested"})
-            response = {"ok":True,"worker_id":str(worker_id),"status":"REVOKED"}
+            cur.execute("update workers set status='REVOKED',token_hash=null where id=%s and status <> 'REVOKED'", (worker_id,))
+            cur.execute(
+                "update job_assignments set status='EXPIRED',expired_at=now() "
+                "where worker_id=%s and status in ('ASSIGNED','RUNNING') returning id,job_id",
+                (worker_id,),
+            )
+            expired=cur.fetchall()
+            for assignment_id,job_id in expired:
+                cur.execute(
+                    "update jobs set status='QUEUED',completed_at=null "
+                    "where id=%s and status in ('RUNNING','QUEUED') "
+                    "and not exists (select 1 from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING'))",
+                    (job_id,job_id),
+                )
+                record_audit_event(
+                    cur,"EXPIRED","assignment",assignment_id,account_id,worker_id,
+                    {"job_id":str(job_id),"reason":"worker_revoked"},
+                )
+            record_audit_event(cur,"REVOKED","worker",worker_id,account_id,worker_id,{"reason":"account_requested","expired_assignments":len(expired)})
+            response={"ok":True,"worker_id":str(worker_id),"status":"REVOKED","expired_assignments":len(expired)}
             idempotency_store(cur, account_id, request, payload, response)
     return response
 
