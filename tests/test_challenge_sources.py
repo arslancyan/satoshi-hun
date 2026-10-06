@@ -1,0 +1,1 @@
+from challenge_sources import _is_custodial\n\ndef test_custodial_source_is_rejected():\n    assert _is_custodial({"difficulty_note":"Custodial: organizer pays by hand"})\n\ndef test_permissionless_source_is_not_marked_custodial():\n    assert not _is_custodial({"difficulty_note":"Public escrow is spendable by the solver","prize":{"note":"funded on-chain"}})\n
