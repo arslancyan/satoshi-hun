@@ -76,3 +76,9 @@ def test_worker_revoke_requeues_active_assignments():
     assert "returning id,job_id" in section
     assert "status='QUEUED'" in section
     assert 'reason":"worker_revoked' in section
+
+
+def test_assignment_locks_worker_before_insert():
+    section=API[API.index('@app.post("/jobs/{job_id}/assign")'):API.index("def expire_stale_assignments")]
+    assert "status='ACTIVE' for update" in section
+    assert "Selected worker is not active or does not belong to this account" in section
