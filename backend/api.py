@@ -78,6 +78,7 @@ def db():
 
 def record_audit_event(cur, event_type, entity_type, entity_id, account_id=None, worker_id=None, payload=None):
     payload = payload or {}
+    cur.execute("select pg_advisory_xact_lock(7483921)")
     cur.execute("select event_hash from audit_events order by created_at desc, id desc limit 1")
     previous = cur.fetchone()
     previous_hash = previous[0] if previous else None
@@ -443,7 +444,7 @@ def public_job_audit(job_id: UUID):
             claims,verified,rejected=cur.fetchone()
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("select event_type,entity_type,entity_id,worker_id,payload,previous_hash,event_hash,created_at from audit_events where entity_type='job' and entity_id=%s order by created_at asc,id asc", (str(job_id),))
+            cur.execute("select event_type,entity_type,entity_id,worker_id,payload,previous_hash,event_hash,created_at from audit_events where (entity_type='job' and entity_id=%s) or (entity_type='assignment' and entity_id in (select id::text from job_assignments where job_id=%s)) order by created_at asc,id asc", (str(job_id), job_id))
             events=cur.fetchall()
     return {"job_id":str(job[0]),"puzzle_id":job[1],"status":job[2],"created_at":job[3],"completed_at":job[4],
             "completed_assignments":assignments,"contribution_seconds":seconds,"claims":claims,
