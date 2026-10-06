@@ -12,6 +12,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 from decimal import Decimal
 
 API_URL = os.environ["SATOSHI_HUNT_API_URL"].rstrip("/")
