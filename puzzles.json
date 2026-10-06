@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "source": "local-demo",
-  "notice": "Demo records only. Replace with verified public challenge records before production.",
+  "notice": "Demo records only. No record is solver-eligible until provenance and verification metadata are supplied by a trusted public challenge source.",
   "puzzles": [
     {
       "id": "135",
@@ -10,7 +10,10 @@
       "reward_btc": 0.01,
       "balance_btc": 0.01,
       "status": "OPEN + FUNDED",
-      "rules": "public-reward-challenge"
+      "rules": "public-reward-challenge",
+      "provenance": null,
+      "verification": null,
+      "verified_at": null
     },
     {
       "id": "142",
@@ -19,7 +22,10 @@
       "reward_btc": 0.005,
       "balance_btc": 0.005,
       "status": "OPEN + FUNDED",
-      "rules": "public-reward-challenge"
+      "rules": "public-reward-challenge",
+      "provenance": null,
+      "verification": null,
+      "verified_at": null
     },
     {
       "id": "151",
@@ -28,7 +34,10 @@
       "reward_btc": 0.002,
       "balance_btc": 0.002,
       "status": "OPEN + FUNDED",
-      "rules": "public-reward-challenge"
+      "rules": "public-reward-challenge",
+      "provenance": null,
+      "verification": null,
+      "verified_at": null
     },
     {
       "id": "118",
@@ -37,7 +46,10 @@
       "reward_btc": 0.008,
       "balance_btc": 0,
       "status": "SOLVED + EMPTY",
-      "rules": "public-reward-challenge"
+      "rules": "public-reward-challenge",
+      "provenance": null,
+      "verification": null,
+      "verified_at": null
     },
     {
       "id": "109",
@@ -46,7 +58,10 @@
       "reward_btc": 0.015,
       "balance_btc": 0.015,
       "status": "SOLVED + FUNDED",
-      "rules": "public-reward-challenge"
+      "rules": "public-reward-challenge",
+      "provenance": null,
+      "verification": null,
+      "verified_at": null
     },
     {
       "id": "101",
@@ -55,7 +70,10 @@
       "reward_btc": 0.02,
       "balance_btc": 0,
       "status": "OPEN + UNFUNDED",
-      "rules": "public-reward-challenge"
+      "rules": "public-reward-challenge",
+      "provenance": null,
+      "verification": null,
+      "verified_at": null
     },
     {
       "id": "099",
@@ -64,7 +82,10 @@
       "reward_btc": 0,
       "balance_btc": 0,
       "status": "UNKNOWN",
-      "rules": "unverified"
+      "rules": "unverified",
+      "provenance": null,
+      "verification": null,
+      "verified_at": null
     }
   ],
   "verified": false,
