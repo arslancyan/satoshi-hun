@@ -151,6 +151,7 @@ if _db:
             """)
             cur.execute("alter table payout_settlements add column if not exists signed_psbt text")
             cur.execute("alter table payout_settlements add column if not exists signed_tx_hex text")
+            cur.execute("alter table payout_settlements add column if not exists payout_digest text")
             cur.execute("alter table withdrawal_requests add column if not exists settlement_id uuid references payout_settlements(id)")
             cur.execute("""
                 create table if not exists payout_settlement_events (
