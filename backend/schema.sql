@@ -89,6 +89,9 @@ create unique index if not exists uq_active_job_assignment
   on job_assignments(job_id)
   where status in ('ASSIGNED','RUNNING');
 
+create unique index if not exists uq_active_worker_assignment
+  on job_assignments(worker_id)
+  where status in ('ASSIGNED','RUNNING');
 create index if not exists idx_assignments_worker on job_assignments(worker_id);
 create index if not exists idx_assignments_job on job_assignments(job_id);
 create index if not exists idx_assignments_stale on job_assignments(status,last_heartbeat_at);
