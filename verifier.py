@@ -79,6 +79,8 @@ def eligible(record):
         and all(str(provenance.get(key, "")).strip() for key in required_provenance)
         and isinstance(verification, dict)
         and all(str(verification.get(key, "")).strip() for key in required_verification)
+        and verification.get("funding_match") is True
+        and verification.get("verification_stale") is False
     )
 
 
