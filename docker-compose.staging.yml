@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: satoshi_hunt
+      POSTGRES_USER: satoshi
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - staging_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U satoshi -d satoshi_hunt"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - staging_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    build: .
+    environment:
+      SATOSHI_HUNT_ENV: staging
+      DATABASE_URL: postgresql://satoshi:change-me@db:5432/satoshi_hunt
+      RATE_LIMIT_REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: replace-with-at-least-32-random-characters
+      CHALLENGE_INGESTION_KEY: replace-with-at-least-32-random-characters
+      OWNER_EMAIL: owner@example.com
+      FRONTEND_ORIGIN: http://localhost:8080
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+volumes:
+  staging_pg:
+  staging_redis:
