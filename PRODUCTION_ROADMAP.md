@@ -31,6 +31,10 @@ Implemented in schema: manual-review community allocations; source reward event 
 ## 9. Network dashboard
 Frontend already exposes worker/network concepts. Production requirement: replace demo telemetry with backend-derived counts and never fabricate worker capacity.
 
+## 10. Economic safety and bounded allocation
+Implemented: server-side allocation guard with configurable maximum active assignments, one active assignment per job, daily verified worker-hour ceiling, and a funded-challenge check immediately before assignment. /network/economics exposes current capacity state without exposing private worker data.
+Policy: worker computation stays on the worker device; Satoshi Hunt has no compute payout obligation merely because a worker is online or active. Scaling is gated by funded public opportunities rather than registration count.
+
 ## 10. Distributed backend
 Implemented in code: Redis-capable shared rate limiter, PostgreSQL integration CI, and server-side challenge ingestion. Production requirement: configure shared Redis, PostgreSQL/Neon with TLS, HTTPS, exact frontend origin, backups, monitoring, and secret rotation. Production requirement: use a shared rate-limit store or gateway; deploy PostgreSQL/Neon with TLS; configure HTTPS and exact frontend origin; rotate secrets and keep them server-side.
 
