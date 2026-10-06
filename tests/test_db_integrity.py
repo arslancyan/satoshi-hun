@@ -43,20 +43,24 @@ def test_schema_and_core_constraints():
                 "insert into job_assignments(id,job_id,worker_id,status) values(%s,%s,%s,'ASSIGNED')",
                 (assignment_a, job, worker),
             )
+            cur.execute("savepoint duplicate_assignment")
             with pytest.raises(psycopg.errors.UniqueViolation):
                 cur.execute(
                     "insert into job_assignments(id,job_id,worker_id,status) values(%s,%s,%s,'RUNNING')",
                     (assignment_b, job, worker),
                 )
+            cur.execute("rollback to savepoint duplicate_assignment")
             cur.execute(
                 "insert into work_claims(id,job_id,worker_id,candidate_hash,result_status) values(%s,%s,%s,%s,'TESTED')",
                 (claim_a, job, worker, "a" * 64),
             )
+            cur.execute("savepoint duplicate_claim")
             with pytest.raises(psycopg.errors.UniqueViolation):
                 cur.execute(
                     "insert into work_claims(id,job_id,worker_id,candidate_hash,result_status) values(%s,%s,%s,%s,'TESTED')",
                     (claim_b, job, worker, "a" * 64),
                 )
+            cur.execute("rollback to savepoint duplicate_claim")
         conn.rollback()
 
 
