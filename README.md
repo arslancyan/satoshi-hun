@@ -42,7 +42,7 @@ This project is not an ordinary Bitcoin wallet/private-key cracker. It is scoped
 
 
 ## Job protocol
-`protocol.py` creates bounded local jobs with CPU/time/candidate limits and a unique job ID. Candidate results are hashed for auditability. No automatic fund transfer or claim is implemented.
+`protocol.py` creates bounded local jobs with CPU/time/candidate limits and a unique job ID. Candidate results are hashed for auditability. Public challenge claims can be verified automatically by a registered server-side adapter. Verified rewards are credited to the non-custodial reward ledger; actual BTC transfer remains outside the application.
 
 ## Registry integrity
 Run `python audit.py` before loading a registry. The audit rejects duplicate IDs, contradictory funded/empty states, and balances larger than recorded rewards.
@@ -54,6 +54,8 @@ Run `python audit.py` before loading a registry. The audit rejects duplicate IDs
 - A global work ledger must deduplicate previously tested candidates so failed work is not reassigned.
 - The platform success fee is 15% of a verified reward; the worker account receives the remaining 85%.
 - The platform fee is accounted separately from user rewards.
+- A server-verified winning claim can be auto-credited to the worker account at 85%; if a payout address is already configured, a non-custodial withdrawal request is queued automatically.
+- Satoshi Hunt never stores private keys or signs/broadcasts Bitcoin transactions; queued withdrawals require an external payout rail/operator to execute the actual BTC transfer.
 - Community distribution is **owner-only and manual**: when the owner elects to allocate part of the owner's own 15% pool, eligible accounts receive shares based on verified worker-hours. Other users' 15% fees are never included in this pool.
 - Reward settlement remains reviewable/auditable; private keys are never collected or stored.
 
