@@ -5,14 +5,14 @@
 <title>Satoshi Hunt — Account</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#020403;color:#ecfff0;font-family:Inter,system-ui,sans-serif}
-.wrap{max-width:900px;margin:auto;padding:22px}.nav{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #55ff7a2b;padding:14px 0}.brand{font-weight:950;letter-spacing:.15em;background:linear-gradient(100deg,#fff,#55ff7a 48%,#ff9f1c);background-size:180% auto;-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 20px #55ff7a33;animation:brandGlow 3.5s ease-in-out infinite alternate}@keyframes brandGlow{0%{background-position:0% 50%;filter:brightness(1);text-shadow:0 0 14px #55ff7a22}100%{background-position:100% 50%;filter:brightness(1.18);text-shadow:0 0 24px #55ff7a55}}.muted{color:#82998b;font-size:11px;line-height:1.6}.nav a{color:#55ff7a;text-decoration:none;font-size:11px;font-weight:900;margin-left:14px}
+.wrap{max-width:900px;margin:auto;padding:22px}.nav{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #55ff7a2b;padding:14px 0}.brand{font-weight:950;letter-spacing:.15em;background:linear-gradient(100deg,#fff,#55ff7a 48%,#ff9f1c);background-size:180% auto;-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 20px #55ff7a33;animation:brandGlow 3.5s ease-in-out infinite alternate}@keyframes brandGlow{0%{background-position:0% 50%;filter:brightness(1);text-shadow:0 0 14px #55ff7a22}100%{background-position:100% 50%;filter:brightness(1.18);text-shadow:0 0 24px #55ff7a55}}.muted{color:#82998b;font-size:11px;line-height:1.6}.nav a,.btn{color:#55ff7a;text-decoration:none;font-size:11px;font-weight:900;margin-left:14px}.notify{position:relative;background:#00ff5e0b;border:1px solid #55ff7a55;padding:9px 12px;border-radius:9px;cursor:pointer}.notify-dot{position:absolute;top:4px;right:5px;width:7px;height:7px;border-radius:50%;background:#ff9f1c;display:none}.notify.has-unread .notify-dot{display:block}.notification-panel{position:fixed;right:22px;top:70px;z-index:30;width:min(420px,calc(100vw - 44px));max-height:70vh;overflow:auto;padding:14px;border:1px solid #55ff7a44;border-radius:14px;background:#050906f7;box-shadow:0 25px 80px #000d;display:none}.notification-panel.open{display:block}.notification-item{padding:12px;border-bottom:1px solid #55ff7a18}.notification-item.unread{background:#55ff7a08}.notification-title{font-weight:900}.notification-message{margin-top:4px;color:#9aac9f;font-size:11px;line-height:1.55}
 h1{font-size:34px;margin:35px 0 6px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}.card{padding:20px;border:1px solid #55ff7a2e;border-radius:17px;background:linear-gradient(145deg,#07100a,#030705);box-shadow:0 15px 45px #0007}.full{grid-column:1/-1}h2{margin:0 0 8px}input{width:100%;padding:13px;margin:7px 0;background:#050906;color:#fff;border:1px solid #55ff7a2b;border-radius:9px}.btn{border:1px solid #55ff7a55;background:#00ff5e0b;color:#55ff7a;padding:11px 14px;border-radius:9px;font-weight:900;cursor:pointer;margin:5px 5px 0 0}.primary{background:#55ff7a;color:#031007}.msg{min-height:18px;color:#ffb56a;font-size:11px;margin-top:9px}.ok{color:#55ff7a}.err{color:#ff8b8b}.eyebrow{color:#55ff7a;font-size:10px;letter-spacing:.18em;font-weight:900}.balance{font-size:28px;font-weight:950;color:#ff9f1c;margin-top:8px}.tag{display:inline-block;padding:4px 7px;border-radius:6px;background:#00ff5e10;color:#55ff7a;font-size:9px;font-weight:900}.hidden{display:none}
 @media(max-width:700px){.grid{grid-template-columns:1fr}.full{grid-column:auto}.nav{align-items:flex-start;flex-direction:column;gap:8px}}
 </style>
 </head>
 <body>
 <main class="wrap">
-<nav class="nav"><div><div class="brand">SATOSHI HUNT</div><div class="muted">ACCOUNT · ACCOUNT CENTER</div></div><div><a href="index.html">HOME</a></div></nav>
+<nav class="nav"><div><div class="brand">SATOSHI HUNT</div><div class="muted">ACCOUNT · ACCOUNT CENTER</div></div><div><button class="notify" id="notificationBtn" onclick="toggleNotifications()">NOTIFICATIONS<span class="notify-dot"></span></button><a href="index.html">HOME</a></div></nav><div id="notificationPanel" class="notification-panel"><b>NOTIFICATIONS</b><div id="notificationList" class="muted" style="margin-top:10px">No notifications yet.</div></div>
 <h1>Account</h1>
 <div id="state" class="muted">Loading your account…</div>
 <section id="auth" class="grid">
@@ -28,9 +28,12 @@ h1{font-size:34px;margin:35px 0 6px}.grid{display:grid;grid-template-columns:1fr
 </section>
 </main>
 <script>
-const API="https://satoshi-hunt-api-production.up.railway.app";let TOKEN=localStorage.getItem("satoshi_hunt_session")||"",WORKERS=[];
+const API="https://satoshi-hunt-api-production.up.railway.app";let TOKEN=localStorage.getItem("satoshi_hunt_session")||"",WORKERS=[],NOTIFICATIONS=[];
 const $=id=>document.getElementById(id);
 function msg(id,t,ok){const e=$(id);e.textContent=t;e.className="msg "+(ok?"ok":"err")}
+async function loadNotifications(){if(!TOKEN)return;try{const r=await fetch(API+"/account/notifications",{headers:{Authorization:"Bearer "+TOKEN},cache:"no-store"});if(!r.ok)throw Error();const d=await r.json();NOTIFICATIONS=d.notifications||[];const unread=NOTIFICATIONS.filter(x=>!x.read_at);$("notificationBtn").classList.toggle("has-unread",unread.length>0);$("notificationList").innerHTML=NOTIFICATIONS.length?NOTIFICATIONS.map(x=>"<div class='notification-item "+(!x.read_at?"unread":"")+"'><div class='notification-title'>"+x.title+"</div><div class='notification-message'>"+x.message+"</div><div class='muted' style='margin-top:5px'>"+new Date(x.created_at).toLocaleString()+"</div>"+(!x.read_at?"<button class='btn' onclick='markNotificationRead(&quot;"+x.id+"&quot;)'>MARK READ</button>":"")+"</div>").join(""):"<div class='muted'>No notifications yet.</div>"}catch(_){}}
+function toggleNotifications(){$("notificationPanel").classList.toggle("open");if($("notificationPanel").classList.contains("open"))loadNotifications()}
+async function markNotificationRead(id){try{await fetch(API+"/account/notifications/"+encodeURIComponent(id)+"/read",{method:"POST",headers:{Authorization:"Bearer "+TOKEN}});await loadNotifications()}catch(_){}}
 async function auth(path,e,p,m){
  const b=$(m).previousElementSibling;b.disabled=true;b.textContent="CONNECTING…";msg(m,"Connecting to Satoshi Hunt API…");
  try{const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify({email:$(e).value.trim(),password:$(p).value})});let d={};try{d=await r.json()}catch(_){}
@@ -44,7 +47,7 @@ async function loadMe(){
  if(r.status===401){TOKEN="";localStorage.removeItem("satoshi_hunt_session");$("state").textContent="Your session expired. Please log in again.";return}
  if(!r.ok)throw Error(d.detail||"Unable to load account");
  $("auth").classList.add("hidden");$("profile").classList.remove("hidden");$("state").textContent="Your saved account settings";$("who").textContent=d.email||"Your account";$("wallet").value=d.btc_payout_address||"";
- await Promise.all([loadWorkers(),loadRewards()]);
+ await Promise.all([loadWorkers(),loadRewards(),loadNotifications()]);
  }catch(e){$("state").textContent=e.message||"Account temporarily unavailable."}
 }
 async function loadWorkers(){
@@ -65,6 +68,6 @@ async function saveWallet(){
  try{const r=await fetch(API+"/account/payout-address",{method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN,"Idempotency-Key":"wallet-"+crypto.randomUUID()},body:JSON.stringify({btc_payout_address:$("wallet").value.trim()})});const d=await r.json();if(!r.ok)throw Error(d.detail||"Wallet update failed");msg("wm","BTC payout address saved and validated. It will remain saved until you change it.",true)}catch(e){msg("wm",e.message||"Wallet update failed")}
 }
 function logout(){TOKEN="";WORKERS=[];localStorage.removeItem("satoshi_hunt_session");location.href="index.html#account"}
-loadMe();
+loadMe();setInterval(loadNotifications,5000);
 </script>
 </body></html>
