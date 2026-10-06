@@ -399,6 +399,7 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
+            expire_stale_assignments(cur)
             row=assignment_for_worker(cur,assignment_id,token_worker_id)
             if not row: raise HTTPException(404,"Assignment not found")
             if row[3]!="RUNNING": raise HTTPException(409,f"Assignment is {row[3]}")
@@ -432,6 +433,8 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
             if token_worker_id != body.worker_id or assignment[1] != token_worker_id:
                 raise HTTPException(403,"Worker token does not match claim worker")
             if assignment[2] not in ("ASSIGNED","RUNNING","COMPLETED"): raise HTTPException(409,"Assignment is no longer claimable")
+            if body.result_status == "VERIFIED":
+                raise HTTPException(403, "VERIFIED claims require a server-side challenge adapter.")
             cid=uuid4()
             try:
                 cur.execute("insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) values(%s,%s,%s,%s,%s,%s,now())",(cid,job_id,body.worker_id,body.candidate_hash,body.result_status,body.cpu_seconds))
@@ -439,12 +442,7 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                 conn.rollback()
                 return {"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
             record_audit_event(cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,payload={"assignment_id":str(body.assignment_id),"candidate_hash":body.candidate_hash,"result_status":body.result_status})
-            if body.result_status == "VERIFIED":
-                cur.execute(
-                    "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) "
-                    "where id=%s and status in ('RUNNING','COMPLETED')",
-                    (job_id,),
-                )
+            # Verification is intentionally performed only by a trusted adapter pipeline.
     return {"accepted":True,"claim_id":str(cid),"result_status":body.result_status,"assignment_id":str(body.assignment_id)}
 
 
