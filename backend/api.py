@@ -118,6 +118,19 @@ class AssignmentCreate(BaseModel):
     worker_id: UUID
 
 
+def worker_id_from_token(authorization: str = Header(default="")) -> UUID:
+    if not authorization.startswith("Worker "):
+        raise HTTPException(401, "Worker token required")
+    token_hash = hashlib.sha256(authorization[7:].encode()).hexdigest()
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id from workers where token_hash=%s and status='ACTIVE'", (token_hash,))
+            row=cur.fetchone()
+    if not row:
+        raise HTTPException(401, "Invalid or revoked worker token")
+    return row[0]
+
+
 class ClaimCreate(BaseModel):
     assignment_id: UUID
     worker_id: UUID
@@ -178,10 +191,12 @@ def worker_owned(cur, worker_id: UUID, account_id: UUID, active_only=True):
 def create_worker(body: WorkerCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
     wid = uuid4()
+    worker_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(worker_token.encode()).hexdigest()
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("insert into workers(id,account_id,label) values(%s,%s,%s)", (wid, account_id, body.label))
-    return {"id": str(wid), "label": body.label, "status": "ACTIVE"}
+            cur.execute("insert into workers(id,account_id,label,token_hash) values(%s,%s,%s,%s)", (wid, account_id, body.label, token_hash))
+    return {"id": str(wid), "label": body.label, "status": "ACTIVE", "worker_token": worker_token}
 
 
 @app.get("/workers")
@@ -194,11 +209,14 @@ def list_workers(account_id: UUID = Depends(account_id_from_auth)):
 
 
 @app.post("/workers/{worker_id}/heartbeat")
-def worker_heartbeat(worker_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+def worker_heartbeat(worker_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     with db() as conn:
         with conn.cursor() as cur:
-            if not worker_owned(cur, worker_id, account_id):
+            if token_worker_id != worker_id:
+                raise HTTPException(403, "Worker token does not match worker")
+            cur.execute("select id from workers where id=%s and status='ACTIVE'", (worker_id,))
+            if not cur.fetchone():
                 raise HTTPException(404, "Worker not found")
             cur.execute("update workers set last_seen_at=now() where id=%s", (worker_id,))
     return {"ok": True, "worker_id": str(worker_id)}
