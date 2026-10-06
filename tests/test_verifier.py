@@ -12,7 +12,7 @@ def _record(challenge_type="hash-commitment", expected="abc123"):
         "status": "OPEN + FUNDED",
         "rules": "public-reward-challenge",
         "provenance": {"url": "https://example.com/challenge", "source_id": "public-1"},
-        "verification": {"method": "hash-commitment", "expected_candidate_hash": expected},
+        "verification": {"method": "hash-commitment", "expected_candidate_hash": expected, "funding_match": True, "verification_stale": False},
     }
 
 
@@ -123,6 +123,8 @@ def _peter_todd_record():
             "checked_at": "2026-10-06",
             "fingerprint": "four-live-escrows-public-record",
             "allowed_algorithms": ["sha256", "ripemd160", "hash160", "hash256"],
+            "funding_match": True,
+            "verification_stale": False,
         },
     }
 
