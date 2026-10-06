@@ -14,3 +14,7 @@ def test_protocol_migration_declares_core_tables():
 def test_schema_keeps_non_custodial_boundary():
     sql=Path("backend/schema.sql").read_text()
     assert "private key" in sql.lower() or "seed phrases" in sql.lower()
+
+def test_worker_idempotency_table_follows_workers_table():
+    sql=Path("backend/schema.sql").read_text()
+    assert sql.index("create table if not exists workers") < sql.index("create table if not exists worker_idempotency_records")
