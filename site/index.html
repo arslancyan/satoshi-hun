@@ -165,6 +165,33 @@ a{color:#55ff7a!important;text-shadow:0 0 10px rgba(0,255,94,.18)}
 @media(max-width:800px){
   .panel.collapsible>.panel-head{padding:2px 0}
 }
+</style><style id="puzzle-first-ui">
+.intro-guide{display:grid;grid-template-columns:1.35fr .65fr;gap:18px;margin-top:22px}
+.guide-card,.workbench{border:1px solid rgba(0,255,94,.24);border-radius:20px;background:linear-gradient(145deg,rgba(7,16,10,.96),rgba(3,8,5,.98));box-shadow:0 0 30px rgba(0,255,94,.045)}
+.guide-card{padding:25px}
+.guide-card h2{font-size:20px;margin:0 0 8px}
+.guide-card p{color:#91a197;font-size:12px;line-height:1.7;margin:0;max-width:760px}
+.guide-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}
+.guide-step{padding:13px;border:1px solid rgba(85,255,122,.13);border-radius:12px;background:rgba(0,255,94,.025)}
+.guide-step b{display:block;color:#55ff7a;font-size:11px}
+.guide-step span{display:block;color:#82998b;font-size:11px;line-height:1.5;margin-top:5px}
+.workbench{margin-top:22px;padding:22px;border-color:rgba(0,255,94,.34);box-shadow:0 0 45px rgba(0,255,94,.07)}
+.workbench-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:16px}
+.workbench-head h2{font-size:23px;margin:0 0 5px}
+.workbench-head p{margin:0;color:#82998b;font-size:11px}
+.workbench-status{padding:8px 11px;border-radius:999px;border:1px solid rgba(247,147,26,.35);color:#ffad36;background:rgba(247,147,26,.06);font-size:10px;font-weight:800;white-space:nowrap}
+#mainPuzzleDetail{margin-top:14px}
+#mainSolver{margin-top:14px}
+#mainPuzzleDetail .panel{margin-top:0}
+#mainSolver .panel{margin-top:0}
+#mainSolver .grid2{margin:0}
+.workbench .puzzle{padding:17px;border-color:rgba(85,255,122,.16);background:rgba(4,10,6,.8)}
+.workbench .puzzle:hover{border-color:rgba(85,255,122,.42);box-shadow:0 0 22px rgba(0,255,94,.07)}
+.workbench .puzzles{gap:10px}
+.workbench .challenge-detail-panel{border-color:rgba(85,255,122,.18)}
+@media(max-width:800px){
+ .intro-guide{grid-template-columns:1fr}.guide-steps{grid-template-columns:1fr}.workbench{padding:15px}.workbench-head{display:block}.workbench-status{display:inline-block;margin-top:10px}
+}
 </style></head>
 <body>
 <div class="app">
@@ -304,5 +331,48 @@ async function loadRegistry(){try{const r=await fetch("puzzles.json",{cache:"no-
     panel.dataset.wired="1";
     wire(panel,head);
   });
+})();
+</script><script id="puzzle-first-layout">
+(function(){
+  const sections=[...document.querySelectorAll(".app > section")];
+  const findSection=(text)=>{
+    return sections.find(s=>s.querySelector("h2")?.textContent?.trim()===text);
+  };
+  const available=findSection("Available challenges");
+  const detail=findSection("What can I work on?");
+  const solver=[...document.querySelectorAll(".app > section.grid2")].find(s=>s.querySelector("h2")?.textContent?.trim()==="Local solver");
+  const hero=document.querySelector(".hero");
+  if(!hero||!available||!detail||!solver||document.getElementById("puzzleWorkbench")) return;
+
+  const guide=document.createElement("section");
+  guide.className="intro-guide";
+  guide.innerHTML=
+    '<div class="guide-card"><span class="eyebrow">NEW TO SATOSHI HUNT?</span><h2>Choose a public puzzle and contribute your own compute.</h2><p>Satoshi Hunt coordinates public computational puzzles. You choose what to work on, run the approved work locally on your device, and the system records verifiable contribution. You are never asked for a Bitcoin private key or seed phrase.</p><div class="guide-steps"><div class="guide-step"><b>01 · CHOOSE</b><span>Pick a puzzle from the public list.</span></div><div class="guide-step"><b>02 · RUN</b><span>Start the selected work on your local worker.</span></div><div class="guide-step"><b>03 · VERIFY</b><span>Progress and results are checked before credit.</span></div></div></div>'+
+    '<div class="guide-card"><span class="eyebrow">CURRENT MODE</span><h2>Funding is paused</h2><p>Demo puzzles are shown for interface testing. No reward is currently live or claimable.</p><div style="margin-top:15px;color:#ffad36;font-size:11px;font-weight:800">DEMO / NO LIVE FUNDING</div></div>';
+  hero.insertAdjacentElement("afterend",guide);
+
+  const wb=document.createElement("section");
+  wb.id="puzzleWorkbench";
+  wb.className="workbench";
+  wb.innerHTML='<div class="workbench-head"><div><span class="eyebrow">MAIN WORKSPACE</span><h2>Choose &amp; Run a Puzzle</h2><p>This is where you select the challenge and, when eligible, start the local worker.</p></div><div class="workbench-status">FUNDING PAUSED · DEMO MODE</div></div>';
+  guide.insertAdjacentElement("afterend",wb);
+  wb.appendChild(available);
+  wb.appendChild(detail);
+  const solverWrap=document.createElement("div");
+  solverWrap.id="mainSolver";
+  wb.appendChild(solverWrap);
+  solverWrap.appendChild(solver);
+
+  available.classList.remove("collapsible","is-collapsed");
+  detail.classList.remove("collapsible","is-collapsed");
+  solver.classList.remove("collapsible","is-collapsed");
+  [available,detail,solver].forEach(x=>x.dataset.wired="1");
+
+  const ah=available.querySelector(":scope > .panel-head");
+  if(ah){ah.querySelector("span").textContent="Click a puzzle to inspect it and choose what you want to run.";ah.querySelector("h2").textContent="1. Choose a puzzle";}
+  const dh=detail.querySelector(":scope > .panel-head");
+  if(dh){dh.querySelector("h2").textContent="2. Review selected puzzle";dh.querySelector("span").textContent="The full rules and work requirements appear here.";}
+  const sh=solver.querySelector(":scope > .panel-head");
+  if(sh){sh.querySelector("h2").textContent="3. Watch the work";sh.querySelector("span").textContent="Your local worker status and progress appear here.";}
 })();
 </script></body></html>
