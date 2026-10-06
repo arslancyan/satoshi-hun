@@ -94,6 +94,10 @@ class JobCreate(BaseModel):
     scope: str = "public-reward-challenge"
 
 
+class AssignmentCreate(BaseModel):
+    worker_id: UUID
+
+
 class ClaimCreate(BaseModel):
     worker_id: UUID
     candidate_hash: str = Field(min_length=32, max_length=128)
@@ -113,18 +117,8 @@ def request_link(body: LinkRequest, request: Request):
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "insert into accounts (id,email) values (%s,%s) on conflict (email) do nothing",
-                (uuid4(), body.email.lower()),
-            )
-            cur.execute("select id from accounts where email=%s", (body.email.lower(),))
-            row = cur.fetchone()
-            cur.execute(
-                "insert into auth_links(email,token_hash,expires_at) values(%s,%s,%s) "
-                "on conflict(email) do update set token_hash=excluded.token_hash, expires_at=excluded.expires_at",
-                (body.email.lower(), token_hash, datetime.now(timezone.utc) + timedelta(minutes=15)),
-            )
-    # Intentionally do not return the token. Production must deliver it through an email provider.
+            cur.execute("insert into accounts (id,email) values (%s,%s) on conflict (email) do nothing", (uuid4(), body.email.lower()))
+            cur.execute("insert into auth_links(email,token_hash,expires_at) values(%s,%s,%s) on conflict(email) do update set token_hash=excluded.token_hash, expires_at=excluded.expires_at", (body.email.lower(), token_hash, datetime.now(timezone.utc) + timedelta(minutes=15)))
     return {"ok": True, "message": "If the address is eligible, a sign-in link will be sent."}
 
 
@@ -134,11 +128,7 @@ def verify(body: VerifyRequest, request: Request):
     token_hash = hashlib.sha256(body.token.encode()).hexdigest()
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "select a.id from accounts a join auth_links l on l.email=a.email "
-                "where a.email=%s and l.token_hash=%s and l.expires_at>now()",
-                (body.email.lower(), token_hash),
-            )
+            cur.execute("select a.id from accounts a join auth_links l on l.email=a.email where a.email=%s and l.token_hash=%s and l.expires_at>now()", (body.email.lower(), token_hash))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(401, "Invalid or expired sign-in token")
@@ -157,6 +147,12 @@ def me(account_id: UUID = Depends(account_id_from_auth)):
     return {"id": str(row[0]), "email": row[1], "btc_payout_address": row[2], "created_at": row[3]}
 
 
+def worker_owned(cur, worker_id: UUID, account_id: UUID, active_only=True):
+    clause = " and status='ACTIVE'" if active_only else ""
+    cur.execute(f"select id from workers where id=%s and account_id=%s{clause}", (worker_id, account_id))
+    return cur.fetchone()
+
+
 @app.post("/workers")
 def create_worker(body: WorkerCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
@@ -171,39 +167,42 @@ def create_worker(body: WorkerCreate, request: Request, account_id: UUID = Depen
 def list_workers(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "select id,label,status,registered_at,last_seen_at from workers where account_id=%s order by registered_at desc",
-                (account_id,),
-            )
+            cur.execute("select id,label,status,registered_at,last_seen_at from workers where account_id=%s order by registered_at desc", (account_id,))
             rows = cur.fetchall()
     return [{"id": str(r[0]), "label": r[1], "status": r[2], "registered_at": r[3], "last_seen_at": r[4]} for r in rows]
+
+
+@app.post("/workers/{worker_id}/heartbeat")
+def worker_heartbeat(worker_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            if not worker_owned(cur, worker_id, account_id):
+                raise HTTPException(404, "Worker not found")
+            cur.execute("update workers set last_seen_at=now() where id=%s", (worker_id,))
+    return {"ok": True, "worker_id": str(worker_id)}
 
 
 @app.get("/jobs")
 def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "select id,puzzle_id,status,created_at,completed_at from jobs "
-                "where scope='public-reward-challenge' order by created_at desc limit 50"
-            )
-            rows=cur.fetchall()
-    return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4]} for r in rows]
+            cur.execute("select j.id,j.puzzle_id,j.status,j.created_at,j.completed_at,a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,a.last_heartbeat_at,a.verified_seconds from jobs j left join job_assignments a on a.job_id=j.id and a.status in ('ASSIGNED','RUNNING') where j.scope='public-reward-challenge' order by j.created_at desc limit 50")
+            rows = cur.fetchall()
+    return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4],"assignment":None if r[5] is None else {"id":str(r[5]),"worker_id":str(r[6]),"status":r[7],"assigned_at":r[8],"started_at":r[9],"completed_at":r[10],"last_heartbeat_at":r[11],"verified_seconds":r[12]}} for r in rows]
 
 
 @app.get("/jobs/{job_id}")
 def get_job(job_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "select id,puzzle_id,scope,status,created_at,completed_at from jobs "
-                "where id=%s and scope='public-reward-challenge'",
-                (job_id,),
-            )
-            row=cur.fetchone()
-    if not row:
-        raise HTTPException(404, "Job not found")
-    return {"id":str(row[0]),"puzzle_id":row[1],"scope":row[2],"status":row[3],"created_at":row[4],"completed_at":row[5]}
+            cur.execute("select id,puzzle_id,scope,status,created_at,completed_at from jobs where id=%s and scope='public-reward-challenge'", (job_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "Job not found")
+            cur.execute("select id,worker_id,status,assigned_at,started_at,completed_at,last_heartbeat_at,verified_seconds from job_assignments where job_id=%s order by assigned_at desc limit 10", (job_id,))
+            assignments = cur.fetchall()
+    return {"id":str(row[0]),"puzzle_id":row[1],"scope":row[2],"status":row[3],"created_at":row[4],"completed_at":row[5],"assignments":[{"id":str(a[0]),"worker_id":str(a[1]),"status":a[2],"assigned_at":a[3],"started_at":a[4],"completed_at":a[5],"last_heartbeat_at":a[6],"verified_seconds":a[7]} for a in assignments]}
 
 
 @app.post("/jobs")
@@ -215,7 +214,78 @@ def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(acc
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("insert into jobs(id,puzzle_id,scope) values(%s,%s,%s)", (jid, body.puzzle_id, body.scope))
-    return {"id": str(jid), "puzzle_id": body.puzzle_id, "status": "QUEUED"}
+    return {"id":str(jid),"puzzle_id":body.puzzle_id,"status":"QUEUED"}
+
+
+@app.post("/jobs/{job_id}/assign")
+def assign_job(job_id: UUID, body: AssignmentCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    aid = uuid4()
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,status from jobs where id=%s and scope='public-reward-challenge' for update", (job_id,))
+            job = cur.fetchone()
+            if not job:
+                raise HTTPException(404, "Job not found")
+            if job[1] != "QUEUED":
+                raise HTTPException(409, f"Job is not assignable from {job[1]} state")
+            if not worker_owned(cur, body.worker_id, account_id):
+                raise HTTPException(400, "Selected worker is not active or does not belong to this account")
+            cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING') for update", (job_id,))
+            if cur.fetchone():
+                raise HTTPException(409, "Job is already assigned")
+            cur.execute("insert into job_assignments(id,job_id,worker_id,status) values(%s,%s,%s,'ASSIGNED')", (aid,job_id,body.worker_id))
+    return {"assignment_id":str(aid),"job_id":str(job_id),"worker_id":str(body.worker_id),"status":"ASSIGNED"}
+
+
+def assignment_for_account(cur, assignment_id: UUID, account_id: UUID):
+    cur.execute("select a.id,a.job_id,a.worker_id,a.status,j.status from job_assignments a join workers w on w.id=a.worker_id join jobs j on j.id=a.job_id where a.id=%s and w.account_id=%s for update", (assignment_id,account_id))
+    return cur.fetchone()
+
+
+@app.post("/assignments/{assignment_id}/start")
+def start_assignment(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    now = datetime.now(timezone.utc)
+    with db() as conn:
+        with conn.cursor() as cur:
+            row=assignment_for_account(cur,assignment_id,account_id)
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3]!="ASSIGNED": raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("update job_assignments set status='RUNNING',started_at=%s,last_heartbeat_at=%s where id=%s",(now,now,assignment_id))
+            cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'",(row[1],))
+    return {"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
+
+
+@app.post("/assignments/{assignment_id}/heartbeat")
+def assignment_heartbeat(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    now=datetime.now(timezone.utc)
+    with db() as conn:
+        with conn.cursor() as cur:
+            row=assignment_for_account(cur,assignment_id,account_id)
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3]!="RUNNING": raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("update job_assignments set last_heartbeat_at=%s where id=%s",(now,assignment_id))
+            cur.execute("update workers set last_seen_at=%s where id=%s",(now,row[2]))
+    return {"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
+
+
+@app.post("/assignments/{assignment_id}/complete")
+def complete_assignment(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    now=datetime.now(timezone.utc)
+    with db() as conn:
+        with conn.cursor() as cur:
+            row=assignment_for_account(cur,assignment_id,account_id)
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3]!="RUNNING": raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("select extract(epoch from (%s-started_at))::bigint from job_assignments where id=%s",(now,assignment_id))
+            seconds=max(0,int(cur.fetchone()[0] or 0))
+            cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s",(now,now,seconds,assignment_id))
+            cur.execute("update jobs set status='VERIFIED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
+            cur.execute("insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,current_date,%s) on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",(uuid4(),account_id,row[2],seconds))
+    return {"assignment_id":str(assignment_id),"status":"COMPLETED","verified_seconds":seconds}
 
 
 @app.post("/jobs/{job_id}/claims")
@@ -223,63 +293,26 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, account_id: UUID = 
     enforce_rate_limit(request, "write")
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "select j.id from jobs j where j.id=%s and j.scope='public-reward-challenge'",
-                (job_id,),
-            )
-            if not cur.fetchone():
-                raise HTTPException(404, "Job not found")
-            cur.execute(
-                "select w.id from workers w where w.id=%s and w.account_id=%s and w.status='ACTIVE'",
-                (body.worker_id, account_id),
-            )
-            worker = cur.fetchone()
-            if not worker:
-                raise HTTPException(400, "Selected worker is not active or does not belong to this account")
-            cid = uuid4()
+            cur.execute("select id from jobs where id=%s and scope='public-reward-challenge'",(job_id,))
+            if not cur.fetchone(): raise HTTPException(404,"Job not found")
+            if not worker_owned(cur,body.worker_id,account_id): raise HTTPException(400,"Selected worker is not active or does not belong to this account")
+            cid=uuid4()
             try:
-                cur.execute(
-                    "insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) "
-                    "values(%s,%s,%s,%s,%s,%s,now())",
-                    (cid, job_id, worker[0], body.candidate_hash, body.result_status, body.cpu_seconds),
-                )
+                cur.execute("insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) values(%s,%s,%s,%s,%s,%s,now())",(cid,job_id,body.worker_id,body.candidate_hash,body.result_status,body.cpu_seconds))
             except psycopg.errors.UniqueViolation:
                 conn.rollback()
-                return {"accepted": False, "reason": "DUPLICATE", "candidate_hash": body.candidate_hash}
-    return {"accepted": True, "claim_id": str(cid), "result_status": body.result_status}
+                return {"accepted":False,"reason":"DUPLICATE","candidate_hash":body.candidate_hash}
+    return {"accepted":True,"claim_id":str(cid),"result_status":body.result_status}
 
 
 @app.get("/audit/account")
 def audit_account(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "select count(*) from workers where account_id=%s",
-                (account_id,),
-            )
-            workers = cur.fetchone()[0]
-            cur.execute(
-                "select coalesce(sum(seconds_verified),0) from worker_hours where account_id=%s",
-                (account_id,),
-            )
-            seconds = cur.fetchone()[0]
-            cur.execute(
-                "select count(*) from reward_events where account_id=%s and settlement_status in ('APPROVED','SETTLED')",
-                (account_id,),
-            )
-            rewards = cur.fetchone()[0]
-    return {"workers": workers, "verified_worker_seconds": seconds, "approved_reward_events": rewards}
-
-    
-@app.post("/workers/{worker_id}/heartbeat")
-def worker_heartbeat(worker_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "update workers set last_seen_at=now() where id=%s and account_id=%s and status='ACTIVE'",
-                (worker_id, account_id),
-            )
-            if cur.rowcount != 1:
-                raise HTTPException(404, "Worker not found")
-    return {"ok": True, "worker_id": str(worker_id)}
+            cur.execute("select count(*) from workers where account_id=%s",(account_id,))
+            workers=cur.fetchone()[0]
+            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where account_id=%s",(account_id,))
+            seconds=cur.fetchone()[0]
+            cur.execute("select count(*) from reward_events where account_id=%s and settlement_status in ('APPROVED','SETTLED')",(account_id,))
+            rewards=cur.fetchone()[0]
+    return {"workers":workers,"verified_worker_seconds":seconds,"approved_reward_events":rewards}
