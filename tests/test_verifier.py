@@ -66,3 +66,24 @@ def test_missing_provenance_is_not_solver_eligible():
     record["provenance"] = {}
     result = verify_candidate_hash(record, "abc123")
     assert result["verified"] is False
+
+
+def test_incomplete_provenance_metadata_is_not_solver_eligible():
+    record = _record()
+    record["provenance"] = {"url": "https://example.com/challenge", "source_id": "public-1"}
+    result = verify_candidate_hash(record, "abc123")
+    assert result["verified"] is False
+
+
+def test_incomplete_verification_metadata_is_not_solver_eligible():
+    record = _record()
+    record["verification"] = {"method": "hash-commitment", "source_id": "public-1", "expected_candidate_hash": "abc123"}
+    result = verify_candidate_hash(record, "abc123")
+    assert result["verified"] is False
+
+
+def test_non_object_metadata_is_not_solver_eligible():
+    record = _record()
+    record["provenance"] = "https://example.com/challenge"
+    result = verify_candidate_hash(record, "abc123")
+    assert result["verified"] is False
