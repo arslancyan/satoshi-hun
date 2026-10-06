@@ -219,3 +219,26 @@ create index if not exists idx_withdrawals_account on withdrawal_requests(accoun
 -- Account passwords are salted PBKDF2 hashes; plaintext passwords are never stored.
 alter table accounts add column if not exists password_hash text;
 create index if not exists idx_withdrawals_status_created on withdrawal_requests(status,created_at);
+
+-- External-solution rotation state. A challenge can be retired when an
+-- authoritative public source proves it was solved outside Satoshi Hunt.
+alter table challenge_registry drop constraint if exists challenge_registry_status_check;
+alter table challenge_registry add constraint challenge_registry_status_check
+  check (status in ('OPEN + FUNDED','OPEN + UNFUNDED','SOLVED + FUNDED','SOLVED + EMPTY','EXTERNAL_SOLVED','UNKNOWN','CANDIDATE_NEEDS_LIVE_VERIFICATION'));
+
+alter table challenge_registry add column if not exists external_status jsonb not null default '{}'::jsonb;
+alter table challenge_registry add column if not exists retired_at timestamptz;
+alter table challenge_registry add column if not exists retired_reason text;
+
+create table if not exists challenge_rotation_events (
+  id uuid primary key,
+  challenge_id text not null references challenge_registry(id),
+  event_type text not null check (event_type in ('EXTERNAL_SOLVED','ROTATED_IN','ROTATED_OUT','NO_ELIGIBLE_REPLACEMENT')),
+  evidence_url text,
+  evidence_id text,
+  previous_status text,
+  next_status text,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_challenge_rotation_events_created
+  on challenge_rotation_events(created_at desc);
