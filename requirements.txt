@@ -1,0 +1,2 @@
+websockets>=12
+psutil>=5.9
