@@ -34,6 +34,17 @@ class ChallengeAdapter:
 
 ADAPTERS = {}
 
+def normalize(record):
+    q=dict(record)
+    q["id"]=str(q.get("id",""))
+    q["reward_btc"]=max(0.0,float(q.get("reward_btc",0) or 0))
+    q["balance_btc"]=max(0.0,float(q.get("balance_btc",0) or 0))
+    q["status"]=q.get("status") if q.get("status") in VALID else "UNKNOWN"
+    q["rules"]=str(q.get("rules",""))
+    q["provenance"]=q.get("provenance")
+    q["verification"]=q.get("verification")
+    return q
+
 
 def register_adapter(adapter):
     if not getattr(adapter, "challenge_type", None) or adapter.challenge_type == "unknown":
