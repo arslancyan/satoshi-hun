@@ -144,6 +144,8 @@ create table if not exists community_allocations (
 
 create index if not exists idx_workers_account on workers(account_id);
 create index if not exists idx_jobs_puzzle on jobs(puzzle_id);
+create unique index if not exists uq_public_challenge_job
+  on jobs(puzzle_id,scope);
 create index if not exists idx_claims_worker on work_claims(worker_id);
 create index if not exists idx_reward_events_account on reward_events(account_id);
 create unique index if not exists uq_reward_event_puzzle_account on reward_events(puzzle_id,account_id) where settlement_status <> 'VOID';
