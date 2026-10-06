@@ -178,3 +178,5 @@ create table if not exists idempotency_records (
   primary key (account_id, idempotency_key)
 );
 create index if not exists idx_idempotency_records_created_at on idempotency_records(created_at);
+
+-- Checkpoint history remains append-only; the API enforces monotonic cursor advancement.
