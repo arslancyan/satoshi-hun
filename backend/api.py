@@ -203,3 +203,16 @@ def audit_account(account_id: UUID = Depends(account_id_from_auth)):
             )
             rewards = cur.fetchone()[0]
     return {"workers": workers, "verified_worker_seconds": seconds, "approved_reward_events": rewards}
+
+    
+@app.post("/workers/{worker_id}/heartbeat")
+def worker_heartbeat(worker_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update workers set last_seen_at=now() where id=%s and account_id=%s and status='ACTIVE'",
+                (worker_id, account_id),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(404, "Worker not found")
+    return {"ok": True, "worker_id": str(worker_id)}
