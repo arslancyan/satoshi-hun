@@ -61,6 +61,9 @@ def api_call(path, method="POST", payload=None):
     request_id = str(uuid.uuid4()) if method != "GET" else ""
     try:
         return api_json(path, method, payload, request_id)
+    except (urllib.error.URLError, TimeoutError):
+        time.sleep(1)
+        return api_json(path, method, payload, request_id)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
         raise RuntimeError(f"API {exc.code}: {detail}") from exc
