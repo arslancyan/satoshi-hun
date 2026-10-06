@@ -40,7 +40,7 @@ def api_json(path, method="GET", payload=None):
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(req, timeout=15) as response:
+    with urllib.request.urlopen(req, timeout=15) as response:  # nosec B310 - URL is restricted to configured API endpoint
         return json.loads(response.read().decode())
 
 
