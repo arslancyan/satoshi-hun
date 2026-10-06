@@ -24,7 +24,7 @@ h1{font-size:34px;margin:35px 0 6px}.grid{display:grid;grid-template-columns:1fr
 <div class="card full"><span class="eyebrow">PAYOUT PROFILE</span><h2>BTC payout address</h2><p class="muted">Save the Bitcoin address where eligible rewards should be withdrawn. Never enter a seed phrase or private key.</p><input id="wallet" placeholder="bc1..."><button class="btn primary" onclick="saveWallet()">SAVE WALLET</button><div id="wm" class="msg"></div></div>
 <div class="card"><span class="eyebrow">WORKER</span><h2>Hunting worker</h2><div class="muted" style="margin-bottom:10px">One account can run only one puzzle at a time. Switching puzzles pauses the previous assignment. Keep heavy worker computation off the browser and avoid multiple heavy workers on one device.</div><div id="workerArea" class="muted">Loading worker status…</div></div>
 <div class="card"><span class="eyebrow">REWARDS</span><div id="rewardArea"><div class="muted">Loading reward balance…</div></div></div>
-<div class="card full"><button class="btn primary" onclick="location.href='index.html#marketplace'">OPEN LIVE MARKETPLACE</button><button class="btn" onclick="logout()">LOG OUT</button><div id="logoutMsg" class="msg"></div></div>
+<div class="card full"><button class="btn" onclick="logout()">LOG OUT</button><div id="logoutMsg" class="msg"></div></div>
 </section>
 </main>
 <script>
