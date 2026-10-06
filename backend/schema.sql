@@ -29,7 +29,7 @@ create table if not exists jobs (
   puzzle_id text not null,
   scope text not null check (scope = 'public-reward-challenge'),
   status text not null default 'QUEUED'
-    check (status in ('QUEUED','RUNNING','VERIFIED','REJECTED','EXPIRED')),
+    check (status in ('QUEUED','RUNNING','COMPLETED','VERIFIED','REJECTED','EXPIRED')),
   created_at timestamptz not null default now(),
   completed_at timestamptz
 );
