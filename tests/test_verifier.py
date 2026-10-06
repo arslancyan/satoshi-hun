@@ -102,3 +102,49 @@ def test_peter_todd_hash_collision_rejects_same_message():
     record["provenance"]={"url":"https://github.com/floflo777/open-crypto-puzzles","source_id":"peter-todd-hash-collision-bounties","checked_at":"2026-08-16"}
     record["verification"]={"method":"published-hash-collision-rule","source_id":"peter-todd-hash-collision-bounties","checked_at":"2026-08-16","fingerprint":"public-puzzle-record"}
     assert verify_candidate_hash(record,"sha256:00:00")["verified"] is False
+
+
+def _peter_todd_record():
+    return {
+        "id": "peter-todd-hash-collision-bounties",
+        "type": "hash-collision",
+        "reward_btc": 0.59364885,
+        "balance_btc": 0.59364885,
+        "status": "OPEN + FUNDED",
+        "rules": "public-reward-challenge",
+        "provenance": {
+            "url": "https://bitcointalk.org/index.php?topic=293382.0",
+            "source_id": "peter-todd-hash-collision-bounties-0-59btc",
+            "checked_at": "2026-10-06",
+        },
+        "verification": {
+            "method": "published P2SH hash-collision rule",
+            "source_id": "peter-todd-hash-collision-bounties-0-59btc",
+            "checked_at": "2026-10-06",
+            "fingerprint": "four-live-escrows-public-record",
+            "allowed_algorithms": ["sha256", "ripemd160", "hash160", "hash256"],
+        },
+    }
+
+
+def test_peter_todd_adapter_rejects_non_collision():
+    assert verify_candidate_hash(_peter_todd_record(), "sha256:00:01")["verified"] is False
+
+
+def test_peter_todd_adapter_rejects_same_message():
+    assert verify_candidate_hash(_peter_todd_record(), "sha256:00:00")["verified"] is False
+
+
+def test_peter_todd_adapter_rejects_unregistered_algorithm():
+    assert verify_candidate_hash(_peter_todd_record(), "md5:00:01")["verified"] is False
+
+
+def test_peter_todd_adapter_rejects_oversized_input():
+    a = "00" * 521
+    assert verify_candidate_hash(_peter_todd_record(), f"sha256:{a}:01")["verified"] is False
+
+
+def test_peter_todd_adapter_binds_algorithm_to_registry():
+    record = _peter_todd_record()
+    record["verification"]["allowed_algorithms"] = ["ripemd160"]
+    assert verify_candidate_hash(record, "sha256:00:01")["verified"] is False
