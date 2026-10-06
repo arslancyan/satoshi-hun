@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""Satoshi Hunt opt-in local worker.
-
-API mode coordinates only public-reward-challenge assignments. It does not
-access wallets, private keys, credentials, or hidden/private challenges.
-"""
 import asyncio
 import hashlib
 import json
@@ -63,45 +57,167 @@ def api_call(path, method="POST", payload=None):
         raise RuntimeError(f"API {exc.code}: {detail}") from exc
 
 
-def candidate_hash(job_id, attempt=0):
-    """Deterministic demo candidate marker, not a wallet/private-key search."""
-    raw = f"satoshi-hunt-demo:{job_id}:{attempt}".encode()
-    return hashlib.sha256(raw).hexdigest()
+
+
+def hash_digest(algorithm, message):
+    algorithm = algorithm.lower()
+    if algorithm == "sha256":
+        return hashlib.sha256(message).digest()
+    if algorithm == "ripemd160":
+        return hashlib.new("ripemd160", message).digest()
+    if algorithm == "hash160":
+        return hashlib.new("ripemd160", hashlib.sha256(message).digest()).digest()
+    if algorithm == "hash256":
+        return hashlib.sha256(hashlib.sha256(message).digest()).digest()
+    raise ValueError(f"Unsupported collision algorithm: {algorithm}")
+
+
+def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory_mb=256, checkpoint_callback=None, stop_event=None):
+    """Perform a genuine birthday collision search.
+
+    The returned candidate is exactly the format accepted by the Peter Todd
+    verifier: algorithm:a_hex:b_hex. No demo marker or synthetic result is
+    submitted. A full-width collision is required.
+    """
+    algorithm = algorithm.lower()
+    seen = {}
+    cursor = int(start_cursor)
+    max_candidates = int(max_candidates)
+    max_memory_bytes = max(32, int(max_memory_mb)) * 1024 * 1024
+    started = time.monotonic()
+    last_checkpoint = cursor
+    last_checkpoint_at = started
+    # 8-byte counter messages keep the search deterministic and reproducible.
+    while True:
+        if stop_event and stop_event.is_set():
+            return None, cursor, time.monotonic() - started
+        if max_candidates and cursor - start_cursor >= max_candidates:
+            return None, cursor, time.monotonic() - started
+
+        message = b"satoshi-hunt:" + cursor.to_bytes(8, "big")
+        digest = hash_digest(algorithm, message)
+        previous = seen.get(digest)
+        if previous is not None and previous != message:
+            # Recompute both digests before returning. This is an independent
+            # local check, not trust in the hash table entry.
+            if hash_digest(algorithm, previous) == hash_digest(algorithm, message):
+                return f"{algorithm}:{previous.hex()}:{message.hex()}", cursor + 1, time.monotonic() - started
+        seen[digest] = message
+        cursor += 1
+
+        # Keep memory bounded. Once the configured table budget is reached,
+        # stop rather than silently swapping the user's machine.
+        if len(seen) * (32 + 64) >= max_memory_bytes:
+            return None, cursor, time.monotonic() - started
+
+        now = time.monotonic()
+        if checkpoint_callback and (now - last_checkpoint_at >= 30):
+            checkpoint_callback(start_cursor, cursor, cursor, str(cursor))
+            last_checkpoint = cursor
+            last_checkpoint_at = now
+
 
 
 async def run_assignment(assignment):
     aid = assignment["id"]
     job_id = assignment["job_id"]
     puzzle_id = assignment["puzzle_id"]
+    stop_event = asyncio.Event()
+    heartbeat_task = None
     try:
         if assignment["status"] == "ASSIGNED":
-            api_call(f"/assignments/{aid}/start")
-        await asyncio.to_thread(api_call, f"/assignments/{aid}/heartbeat")
-        # Keep the assignment lease alive while the worker is active.
+            await asyncio.to_thread(api_call, f"/assignments/{aid}/start")
 
-        for i in range(0, 101, 10):
-            await asyncio.sleep(0.08)
-            print(f"[{puzzle_id}] lightweight public-challenge pass {i}%")
+        challenge_feed = await asyncio.to_thread(api_json, "/marketplace/challenges")
+        challenge = next((x for x in challenge_feed.get("challenges", []) if x.get("challenge_id") == puzzle_id), None)
+        if not challenge:
+            raise RuntimeError("Assigned challenge is no longer present in the verified live registry")
+        if challenge.get("challenge_type") != "hash-collision":
+            raise RuntimeError(f"No real solver is registered for challenge type {challenge.get('challenge_type')!r}")
 
-        # Candidate submission is intentionally a framework marker. A real
-        # adapter must implement the public challenge's published verifier.
-        result = await asyncio.to_thread(
-            api_call,
-            f"/jobs/{job_id}/claims",
-            "POST",
-            {
-                "assignment_id": aid,
-                "worker_id": WORKER_ID,
-                "candidate_hash": candidate_hash(job_id),
-                "result_status": "TESTED",
-                "cpu_seconds": 0,
-            },
+        allowed = (challenge.get("verification") or {}).get("allowed_algorithms") or []
+        requested = os.environ.get("SATOSHI_HUNT_ALGORITHM", "").strip().lower()
+        algorithm = requested if requested in allowed else (str(allowed[0]).lower() if allowed else "")
+        if algorithm not in {"sha256", "ripemd160", "hash160", "hash256"}:
+            raise RuntimeError("Challenge has no supported collision algorithm")
+
+        # Heartbeats run independently of the CPU search so a long-running
+        # real solver remains leased and can also notice a user stop request.
+        async def heartbeat_loop():
+            while not stop_event.is_set():
+                try:
+                    await asyncio.to_thread(api_call, f"/assignments/{aid}/heartbeat")
+                except Exception as exc:
+                    print(f"[{puzzle_id}] heartbeat: {exc}")
+                    if "409" in str(exc) or "404" in str(exc):
+                        stop_event.set()
+                        return
+                await asyncio.sleep(15)
+
+        heartbeat_task = asyncio.create_task(heartbeat_loop())
+        max_candidates = max(0, int(os.environ.get("SATOSHI_HUNT_MAX_CANDIDATES", "0")))
+        max_memory_mb = max(32, int(os.environ.get("SATOSHI_HUNT_MAX_MEMORY_MB", "256")))
+        cursor_start = int(os.environ.get("SATOSHI_HUNT_START_CURSOR", "0"))
+
+        def checkpoint(start, end, nxt, nonce):
+            try:
+                api_call(
+                    f"/assignments/{aid}/checkpoint",
+                    "POST",
+                    {"assignment_id": aid, "cursor_start": start, "cursor_end": end, "cursor_next": nxt, "nonce": nonce},
+                )
+                print(f"[{puzzle_id}] checkpoint cursor={nxt}")
+            except Exception as exc:
+                print(f"[{puzzle_id}] checkpoint: {exc}")
+
+        print(f"[{puzzle_id}] REAL {algorithm} collision search started")
+        candidate, cursor, elapsed = await asyncio.to_thread(
+            solve_hash_collision,
+            algorithm,
+            cursor_start,
+            max_candidates,
+            max_memory_mb,
+            checkpoint,
+            stop_event,
         )
-        print(f"[{puzzle_id}] claim: {result.get('accepted', False)}")
-        done = await asyncio.to_thread(api_call, f"/assignments/{aid}/complete")
-        print(f"[{puzzle_id}] completed: {done.get('contribution_seconds', 0)} contribution seconds")
+
+        if stop_event.is_set():
+            print(f"[{puzzle_id}] search stopped at cursor={cursor}")
+            return
+
+        cpu_seconds = max(0, int(elapsed))
+        if candidate:
+            print(f"[{puzzle_id}] genuine collision found at cursor={cursor}; submitting verifier candidate")
+            result = await asyncio.to_thread(
+                api_call,
+                f"/jobs/{job_id}/claims",
+                "POST",
+                {
+                    "assignment_id": aid,
+                    "worker_id": WORKER_ID,
+                    "candidate_hash": candidate,
+                    "result_status": "TESTED",
+                    "cpu_seconds": cpu_seconds,
+                },
+            )
+            print(f"[{puzzle_id}] verifier response: {result}")
+        else:
+            print(f"[{puzzle_id}] no collision found in bounded search window; no reward claim submitted")
+        try:
+            done = await asyncio.to_thread(api_call, f"/assignments/{aid}/complete")
+            print(f"[{puzzle_id}] completed: {done.get('contribution_seconds', 0)} contribution seconds")
+        except Exception as exc:
+            print(f"[{puzzle_id}] completion: {exc}")
     except Exception as exc:
         print(f"[{puzzle_id}] assignment error: {exc}")
+    finally:
+        stop_event.set()
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def assignment_loop():
