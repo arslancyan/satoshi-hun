@@ -1,6 +1,12 @@
 -- Satoshi Hunt backend foundation (non-custodial)
 -- Stores attribution/accounting metadata only. Never store private keys or seed phrases.
 
+create table if not exists auth_links (
+  email text primary key,
+  token_hash text not null,
+  expires_at timestamptz not null
+);
+
 create table if not exists accounts (
   id uuid primary key,
   email text not null unique,
