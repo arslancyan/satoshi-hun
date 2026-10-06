@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 AUTHORITATIVE_ESCROW_SPEND_SLUGS = set(filter(None, os.getenv("AUTHORITATIVE_ESCROW_SPEND_SLUGS", "peter-todd-hash-collision-bounties-0-59btc").split(",")))
+PUBLIC_CHALLENGE_SLUGS = set(filter(None, os.getenv("PUBLIC_CHALLENGE_SLUGS", "").split(",")))
 ID_ALIASES = {}
 for _pair in filter(None, os.getenv("CHALLENGE_ID_ALIASES", "peter-todd-hash-collision-bounties-0-59btc:peter-todd-hash-collision-bounties").split(",")):
     _src, _dst = _pair.split(":", 1)
@@ -231,6 +232,8 @@ class OpenCryptoPuzzlesAdapter:
         out = []
 
         for puzzle in rows:
+            if PUBLIC_CHALLENGE_SLUGS and puzzle.get("slug") not in PUBLIC_CHALLENGE_SLUGS:
+                continue
             if puzzle.get("status") not in ("open", "watch") or _is_custodial(puzzle):
                 continue
 
