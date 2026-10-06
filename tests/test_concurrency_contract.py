@@ -68,3 +68,11 @@ def test_stale_assignment_recovery_is_audited():
     assert "returning id,job_id,worker_id" in section
     assert '"EXPIRED"' in section
     assert '"timeout_seconds":ASSIGNMENT_TIMEOUT_SECONDS' in section
+
+
+def test_worker_revoke_requeues_active_assignments():
+    section=API[API.index('@app.post("/workers/{worker_id}/revoke")'):API.index('@app.get("/workers")')]
+    assert "status='EXPIRED'" in section
+    assert "returning id,job_id" in section
+    assert "status='QUEUED'" in section
+    assert 'reason":"worker_revoked' in section
