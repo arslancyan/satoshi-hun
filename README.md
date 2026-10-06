@@ -1,17 +1,30 @@
-# Satoshi Hunt
+# Satoshi Hunt — Hybrid Puzzle Intelligence
 
-Satoshi Hunt is a lightweight public-puzzle intelligence dashboard with an optional local CPU worker.
+Lightweight website + local CPU worker for publicly published reward puzzles.
 
-## Architecture
-The website is the control center. A small local worker can connect over localhost and execute lightweight candidate-generation jobs on the user's machine.
+## Current phase
+- Normalized puzzle registry in `puzzles.json`
+- Status/eligibility guards in `verifier.py`
+- Registry audit in `audit.py`
+- Local CPU queue guard in `worker.py`
+- Dashboard filters for funded/open/solved/empty states
 
-## Run local worker
-Python 3.10+:
+Only **OPEN + FUNDED** records are eligible for the local solver queue.
+
+A zero balance alone is not proof that a puzzle was solved.
+
+## Run worker
 ```bash
-pip install websockets psutil
+pip install -r requirements.txt
 python worker.py
 ```
-Then open the website.
 
-## Scope
-Only use for publicly published reward puzzles/challenges that explicitly authorize solvers. An empty address balance does not by itself prove that a puzzle was solved. This project is not an ordinary Bitcoin wallet/private-key cracker.
+## Audit
+```bash
+python audit.py
+```
+
+## Next production layer
+Connect a verified public challenge registry, read-only blockchain/indexer balance checks, deterministic challenge-specific verifiers, authenticated worker jobs, rate limits, audit logs, and explicit-permission submission adapters.
+
+This project is not an ordinary Bitcoin wallet/private-key cracker. It is scoped to public challenges that explicitly publish a reward and permit solving.
