@@ -1518,7 +1518,7 @@ def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = De
                 raise HTTPException(409,f"Assignment is {row[3]}")
             now=datetime.now(timezone.utc)
             cur.execute(
-                "update job_assignments set status='PAUSED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
+                "update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
                 (assignment_id,),
             )
             if cur.rowcount != 1:
