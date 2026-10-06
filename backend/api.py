@@ -995,11 +995,6 @@ def assignment_for_account(cur, assignment_id: UUID, account_id: UUID):
 def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     payload={"assignment_id":str(assignment_id)}
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
-            if replay is not None:
-                return replay
     now = datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
@@ -1025,11 +1020,6 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
 def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     payload={"assignment_id":str(assignment_id)}
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
-            if replay is not None:
-                return replay
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
@@ -1053,11 +1043,6 @@ def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id:
 def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
     payload={"assignment_id":str(assignment_id)}
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
-            if replay is not None:
-                return replay
     now=datetime.now(timezone.utc)
     with db() as conn:
         with conn.cursor() as cur:
