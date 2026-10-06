@@ -20,10 +20,17 @@
 - Production email provider for sign-in links
 - Secret manager for JWT and database credentials
 - TLS/domain configuration
-- Monitoring, alerting, backups, restore drills
+- Monitoring, alerting, backups, restore drills (runbook added; execution still requires production infrastructure)
 - External penetration test / security review
 - Real public challenge adapters and authoritative verification sources
 - Manual reward settlement operations
+
+## Local/staging hardening added
+- End-to-end challenge → verifier → reward accounting contract tests
+- Concurrency/unique-assignment contract tests
+- Side-effect-free staging smoke script
+- Operations, backup/restore, and incident-response runbook
+- Explicit launch-gate checklist
 
 ## Launch gates
 1. CI green on main.
