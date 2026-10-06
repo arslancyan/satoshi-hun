@@ -68,3 +68,6 @@ The next platform layer is now represented in code and migrations:
 - staging/load-test documentation.
 
 Remaining production gates are infrastructure deployment, real challenge adapters/provenance, real worker beta testing, abuse/load testing, and external security review.
+
+## 13. Production configuration preflight
+Implemented: side-effect-free `production_check.py` validates required production secrets, shared Redis rate limiting, explicit HTTPS frontend origin, and bounded assignment settings before launch. This is a deployment gate, not a substitute for infrastructure or external security review.
