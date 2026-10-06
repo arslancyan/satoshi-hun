@@ -55,3 +55,16 @@ SATOSHI_HUNT_ENV=production python production_check.py
 ```
 
 The check is side-effect free. It requires a configured PostgreSQL URL, strong JWT and challenge-ingestion secrets, an owner identity, a shared Redis rate-limit store, an explicit HTTPS frontend origin, and bounded worker allocation settings. It never handles private keys or sends Bitcoin.
+
+
+## Deployment
+
+- `DEPLOYMENT.md` documents local staging and production rollout.
+- `Dockerfile` builds the API container.
+- `docker-compose.staging.yml` provides PostgreSQL + Redis + API for local staging.
+- `.env.example` lists required configuration without real secrets.
+- `tools/init_db.py` applies schema and migrations in order.
+- `tools/backup_db.sh` and `tools/restore_db.sh` provide PostgreSQL backup/restore helpers.
+- `tools/staging_smoke.py` validates the verifier and reward-accounting contract without external side effects.
+
+Production still requires real managed infrastructure, secrets, monitoring, backups, a real public challenge adapter, and external security review.
