@@ -53,10 +53,38 @@ jobs:
           SATOSHI_HUNT_API: http://127.0.0.1:8000
         run: python tools/staging_e2e.py
 
+      - name: Concurrent assignment race gate
+        env:
+          SATOSHI_HUNT_API: http://127.0.0.1:8000
+        run: python tools/staging_concurrency.py
+      - name: Start mock payout executor
+        env:
+          MOCK_PAYOUT_TX_PREFIX: staging-mock-${{ github.run_id }}-
+        run: |
+          python tools/mock_payout_executor.py >/tmp/mock-payout.log 2>&1 &
+          sleep 1
+      - name: Run payout worker against mock executor
+        env:
+          SATOSHI_HUNT_API: http://127.0.0.1:8000
+          PAYOUT_WORKER_TOKEN: staging-payout-worker-token
+          PAYOUT_EXECUTOR_URL: http://127.0.0.1:8765
+          PAYOUT_EXECUTOR_TOKEN: staging-mock-token
+          PAYOUT_POLL_SECONDS: "1"
+        run: timeout 20s python tools/payout_worker.py || test $? -eq 124
+      - name: Verify payout reached PAID
+        env:
+          SATOSHI_HUNT_API: http://127.0.0.1:8000
+          STAGING_OWNER_EMAIL: owner@example.com
+          STAGING_OWNER_PASSWORD: Staging-Owner-Only-2026!
+          MOCK_PAYOUT_TX_PREFIX: staging-mock-${{ github.run_id }}-
+        run: python tools/staging_payout_verify.py
+
       - name: Upload API log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: staging-e2e-api-log-${{ github.run_id }}
-          path: /tmp/satoshi-hunt-api.log
+          path: |
+            /tmp/satoshi-hunt-api.log
+            /tmp/mock-payout.log
           if-no-files-found: warn
