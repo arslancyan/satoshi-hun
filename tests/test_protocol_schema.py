@@ -34,7 +34,7 @@ def test_api_claim_verification_contract():
     assert "server-side challenge adapter" in claims
     assert "c.result_status='TESTED'" in verify
     assert "source_claim_id" in verify
-    assert "'APPROVED',%s" in verify
+    assert "'REVIEW',%s" in verify
 
 
 def test_api_assignment_economic_guard_contract():
