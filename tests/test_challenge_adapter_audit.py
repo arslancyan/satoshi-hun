@@ -18,20 +18,24 @@ def test_research_adapters_are_verified_but_not_runnable():
         assert not ADAPTERS[challenge_id].runnable
 
 
-def test_registered_compute_adapters_audit_cleanly():
+def test_public_collision_adapters_are_research_only():
     for challenge_id in (
         "peter-todd-sha256-bounty",
         "peter-todd-ripemd160-bounty",
         "peter-todd-hash160-bounty",
         "peter-todd-hash256-bounty",
     ):
-        assert audit.classify(challenge_id) == "RUNNABLE"
+        assert audit.classify(challenge_id) == "VERIFIED"
         assert audit.audit_adapter(ADAPTERS[challenge_id]) == []
 
 
 def test_malformed_runnable_adapter_is_rejected():
     broken = replace(
         ADAPTERS["peter-todd-sha256-bounty"],
+        status="RUNNABLE",
+        execution_mode="COMPUTE",
         search_space=None,
+        solver_entrypoint="backend.api:_managed_hash_digest",
+        test_vectors=({"algorithm": "sha256", "message": "satoshi-hunt:0"},),
     )
     assert audit.audit_adapter(broken)

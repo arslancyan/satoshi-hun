@@ -48,28 +48,28 @@ class AdapterSpec:
 # enter RUNNABLE. Research puzzles can be VERIFIED without becoming runnable.
 ADAPTERS: dict[str, AdapterSpec] = {
     "peter-todd-sha256-bounty": AdapterSpec(
-        "peter-todd-sha256-bounty", "hash-collision-v1", "COMPUTE",
-        "hash-collision", "RUNNABLE", "64-bit candidate lane",
-        "backend.api:_managed_hash_digest",
-        ({"algorithm": "sha256", "message": "satoshi-hunt:0"},),
+        "peter-todd-sha256-bounty", "hash-collision-v1", "RESEARCH",
+        "hash-collision", "VERIFIED", "unbounded full-width collision domain",
+        None, None, (),
+        "Public bounty is useful for research/verification analytics; no bounded audited compute adapter is approved.",
     ),
     "peter-todd-ripemd160-bounty": AdapterSpec(
-        "peter-todd-ripemd160-bounty", "hash-collision-v1", "COMPUTE",
-        "hash-collision", "RUNNABLE", "64-bit candidate lane",
-        "backend.api:_managed_hash_digest",
-        ({"algorithm": "ripemd160", "message": "satoshi-hunt:0"},),
+        "peter-todd-ripemd160-bounty", "hash-collision-v1", "RESEARCH",
+        "hash-collision", "VERIFIED", "unbounded full-width collision domain",
+        None, None, (),
+        "Public bounty is useful for research/verification analytics; no bounded audited compute adapter is approved.",
     ),
     "peter-todd-hash160-bounty": AdapterSpec(
-        "peter-todd-hash160-bounty", "hash-collision-v1", "COMPUTE",
-        "hash-collision", "RUNNABLE", "64-bit candidate lane",
-        "backend.api:_managed_hash_digest",
-        ({"algorithm": "hash160", "message": "satoshi-hunt:0"},),
+        "peter-todd-hash160-bounty", "hash-collision-v1", "RESEARCH",
+        "hash-collision", "VERIFIED", "unbounded full-width collision domain",
+        None, None, (),
+        "Public bounty is useful for research/verification analytics; no bounded audited compute adapter is approved.",
     ),
     "peter-todd-hash256-bounty": AdapterSpec(
-        "peter-todd-hash256-bounty", "hash-collision-v1", "COMPUTE",
-        "hash-collision", "RUNNABLE", "64-bit candidate lane",
-        "backend.api:_managed_hash_digest",
-        ({"algorithm": "hash256", "message": "satoshi-hunt:0"},),
+        "peter-todd-hash256-bounty", "hash-collision-v1", "RESEARCH",
+        "hash-collision", "VERIFIED", "unbounded full-width collision domain",
+        None, None, (),
+        "Public bounty is useful for research/verification analytics; no bounded audited compute adapter is approved.",
     ),
     # These are deliberately VERIFIED/RESEARCH: their published derivations
     # are reproducible, but solving requires external information or an

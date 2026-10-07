@@ -14,14 +14,18 @@ def test_research_adapters_are_registered_but_not_runnable():
         assert not spec.runnable
 
 
-def test_only_explicit_compute_adapters_are_runnable():
-    ids = runnable_challenge_ids()
-    assert ids == {
+def test_no_unbounded_public_collision_adapter_is_runnable():
+    assert runnable_challenge_ids() == set()
+    for challenge_id in (
         "peter-todd-sha256-bounty",
         "peter-todd-ripemd160-bounty",
         "peter-todd-hash160-bounty",
         "peter-todd-hash256-bounty",
-    }
+    ):
+        spec = get_adapter(challenge_id)
+        assert spec.status == "VERIFIED"
+        assert spec.execution_mode == "RESEARCH"
+        assert not spec.runnable
 
 
 def test_runtime_contract_exposes_research_reason():
