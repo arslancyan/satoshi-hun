@@ -48,7 +48,7 @@ def _resolve_entrypoint(entrypoint: str):
 
 def audit_adapter(spec: AdapterSpec) -> list[str]:
     errors: list[str] = []
-    if spec.status == "RUNNABLE":
+    if spec.status in {"AUDITED", "RUNNABLE"}:
         if spec.execution_mode != "COMPUTE":
             errors.append("RUNNABLE adapter must use COMPUTE execution_mode")
         if not spec.search_space:
@@ -93,6 +93,8 @@ def classify(challenge_id: str) -> str:
         return "DISCOVERED"
     if spec.status == "RUNNABLE" and spec.runnable:
         return "RUNNABLE"
+    if spec.status == "AUDITED":
+        return "AUDITED"
     return "VERIFIED" if spec.status == "VERIFIED" else spec.status
 
 
