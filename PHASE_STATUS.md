@@ -49,5 +49,6 @@ Satoshi Hunt must not be presented as a live earning network until production in
 | 32 Production reward/payout hardening | DONE | REVIEW settlement gate, owner approval, non-custodial payout queue, external txid validation, retry/idempotency controls |
 | 33 Real staging closure | DONE | PostgreSQL/Redis staging E2E, backup/restore drill, concurrency race gate, mock payout executor, payout worker, PAID verification |
 | 34 Real public challenge integration | FOUNDATION COMPLETE / PUBLIC-RUNNABLE BLOCKED | Public funded research challenges registered safely; explicit fail-closed qualification gate added. No real public challenge currently satisfies every runnable gate, so no research bounty is exposed as generic compute |
-| 35 Security & economic audit | IN PROGRESS | Fail-closed challenge promotion tests added; next gates are security abuse review, economic invariant audit, production CI confirmation, and external security review |
+| 35 Security & economic audit | IN PROGRESS / HARD GATES REMAIN | Repository audit and fail-closed qualification tests pass; production smoke/deployed security review, secret rotation, abuse testing, external review, and a real runnable public challenge remain required |
 
+\n## Phase 36\n\n| Phase | Status | Repository result |\n|---|---|---|\n| 36 Closed Beta | FOUNDATION STARTED / GATED | Fail-closed beta policy, bounded cohort capacity, runnable-only admission policy, telemetry/rollback requirements documented; live beta remains blocked until Phase 35 hard gates are closed |\n
