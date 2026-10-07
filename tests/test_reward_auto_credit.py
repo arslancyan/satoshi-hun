@@ -53,3 +53,25 @@ def test_external_payout_requires_real_txid_format():
     assert not validate_external_txid("pending")
     assert payout_contract()["custody"] == "none"
     assert payout_contract()["requires_external_txid"] is True
+
+
+def test_verified_claim_enters_review_before_credit_or_payout():
+    api=Path("backend/api.py").read_text()
+    start=api.index("def auto_credit_verified_claim")
+    end=api.index('@app.post("/jobs/{job_id}/claims")', start)
+    flow=api[start:end]
+    assert "'REVIEW'" in flow
+    assert "reward_balances" not in flow
+    assert "withdrawal_requests" not in flow
+    assert "REWARD_REVIEW_CREATED" in flow
+
+
+def test_owner_approval_is_the_credit_gate():
+    api=Path("backend/api.py").read_text()
+    assert '@app.post("/admin/rewards/{reward_id}/approve")' in api
+    start=api.index('@app.post("/admin/rewards/{reward_id}/approve")')
+    end=api.index("class PayoutAddressUpdate", start)
+    flow=api[start:end]
+    assert "settlement_status='APPROVED'" in flow
+    assert "reward_balances" in flow
+    assert "withdrawal_requests" in flow
