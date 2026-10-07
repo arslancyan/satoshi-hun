@@ -36,6 +36,8 @@ def queue_gate(record: dict[str, Any]) -> dict[str, Any]:
         reasons.append("adapter_not_audited")
     if verification.get("adapter_runnable") is not True:
         reasons.append("adapter_not_runnable")
+    if str(verification.get("adapter_status") or "").upper() != "RUNNABLE":
+        reasons.append("adapter_status_not_runnable")
     if payout.get("permissionless") is not True:
         reasons.append("payout_not_permissionless")
     if payout.get("automatic_chain_claim") is not True:
