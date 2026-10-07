@@ -6,9 +6,10 @@
   "reward_sats": 10000,
   "execution_mode": "COMPUTE",
   "adapter_id": "native-bounded-btc-v1",
+  "test_vector": {"nonce": 276206, "hash": "0000718a39f41b2eb23f40bae23995d68a991ca67b486bf3051f89e2d4db0c91"},
   "verifier": {
     "kind": "sha256-leading-zero-proof",
-    "difficulty_bits": 20,
+    "difficulty_bits": 16,
     "max_nonce": 1048575,
     "deterministic": true
   },
