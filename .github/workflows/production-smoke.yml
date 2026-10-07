@@ -16,4 +16,5 @@ jobs:
         env:
           SATOSHI_HUNT_API: https://satoshi-hunt-api-production.up.railway.app
           SATOSHI_HUNT_FRONTEND_ORIGIN: https://arslancyan.github.io
+          SATOSHI_HUNT_EXPECTED_COMMIT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
         run: python3 tools/production_smoke.py
