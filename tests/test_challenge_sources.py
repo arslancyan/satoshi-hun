@@ -25,3 +25,14 @@ def test_stable_id_alias_prevents_catalog_rename():
 
 def test_authoritative_solve_rule_is_explicit():
     assert "peter-todd-hash-collision-bounties-0-59btc" in AUTHORITATIVE_ESCROW_SPEND_SLUGS
+
+def test_live_record_exports_search_metrics():
+    from challenge_sources import LiveSourceRecord
+    record = LiveSourceRecord(
+        "demo", "Demo", "bitcoin", 1.0, 1.0, "OPEN + FUNDED",
+        {"url": "https://example.com", "source_id": "demo", "checked_at": "2026-01-01T00:00:00Z"},
+        {"method": "test", "source_id": "demo", "checked_at": "2026-01-01T00:00:00Z", "fingerprint": "x"},
+        {"permissionless": False}, [], "research", "test",
+        {"keyspace_total": "1024", "keyspace_remaining": "1024", "difficulty_category": "EXTREME"},
+    )
+    assert record.as_registry()["search_metrics"]["keyspace_total"] == "1024"
