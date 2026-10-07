@@ -6,6 +6,15 @@ from challenge_sources import OpenCryptoPuzzlesAdapter
 
 DATABASE_URL = os.environ.get("DATABASE_URL","")
 SOURCE_ID = "open-crypto-puzzles-v2"
+# Highest-priority BTC research challenges selected from the live catalog.
+# These are public, funded puzzles with strong published leads, but they are
+# not treated as generic hash-search jobs unless a challenge-specific solver
+# adapter exists.
+PRIORITY_BTC_CHALLENGES = (
+    "keir-finlow-bates-blockchain-book-600ksats",
+    "corey-phillips-kitten-passphrase-1msats",
+    "rushwallet-contest-30-1msats",
+)
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -168,6 +177,28 @@ def sync():
                             cid,
                         ),
                     )
+
+            # Keep a small, deliberate set of the strongest public BTC opportunities live.
+            # This makes the marketplace useful even before the first external solve/rotation event.
+            for cid in PRIORITY_BTC_CHALLENGES:
+                cur.execute(
+                    """insert into jobs(id,puzzle_id,scope,status)
+                       select gen_random_uuid(),%s,'public-reward-challenge','QUEUED'
+                       where exists (
+                         select 1 from challenge_registry
+                         where id=%s and status='OPEN + FUNDED'
+                           and balance_btc>0 and funding_match=true
+                           and verification_stale=false
+                           and payout->>'permissionless'='true'
+                           and payout->>'automatic_chain_claim'='true'
+                       )
+                         and not exists (
+                           select 1 from jobs
+                           where puzzle_id=%s and scope='public-reward-challenge'
+                             and status in ('QUEUED','RUNNING')
+                         )""",
+                    (cid,cid,cid),
+                )
 
             for retired in solved:
                 cur.execute(
