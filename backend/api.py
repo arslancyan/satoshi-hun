@@ -1,13 +1,9 @@
 import os
 import hashlib
-import base64
-import hmac
-import re
 import json
 import logging
 import secrets
 import time
-import threading
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -36,231 +32,15 @@ CHALLENGE_INGESTION_KEY = os.environ.get("CHALLENGE_INGESTION_KEY", "")
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "").strip().lower()
 RATE_LIMIT_REDIS_URL = os.environ.get("RATE_LIMIT_REDIS_URL", "")
 MAX_ACTIVE_ASSIGNMENTS = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS", "100")))
-MAX_ACTIVE_ASSIGNMENTS_PER_JOB = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS_PER_JOB", "100")))
+MAX_ACTIVE_ASSIGNMENTS_PER_JOB = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS_PER_JOB", "1")))
 MAX_NETWORK_WORKER_HOURS_PER_DAY = max(1, int(os.environ.get("MAX_NETWORK_WORKER_HOURS_PER_DAY", "10000")))
 PAYOUT_WORKER_TOKEN = os.environ.get("PAYOUT_WORKER_TOKEN", "").strip()
 MAX_SINGLE_PAYOUT_BTC = Decimal(os.environ.get("MAX_SINGLE_PAYOUT_BTC", "0.001"))
 MAX_DAILY_PAYOUT_BTC = Decimal(os.environ.get("MAX_DAILY_PAYOUT_BTC", "0.005"))
 PAYOUT_RETRY_AFTER_MINUTES = max(5, int(os.environ.get("PAYOUT_RETRY_AFTER_MINUTES", "15")))
-PAYOUT_SIGNER_TOKEN = os.environ.get("PAYOUT_SIGNER_TOKEN", "").strip()
-TREASURY_BTC_ADDRESS = os.environ.get("TREASURY_BTC_ADDRESS", "bc1ptstlyntypqqf8s5qz3jwcsrxw2pxqj634c7pklj2mjlvqwl22l6qqq8csl").strip()
-TREASURY_WALLET_ID = UUID("00000000-0000-0000-0000-000000000001")
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.1")
-
-# Managed solver state. A RUN from the website starts a real server-side solver
-# for that assignment, so users do not need to install or operate worker.py.
-_MANAGED_SOLVERS = {}
-_MANAGED_SOLVERS_LOCK = threading.Lock()
-
-
-def _managed_hash_digest(algorithm, message):
-    algorithm = str(algorithm).lower()
-    if algorithm == "sha256":
-        return hashlib.sha256(message).digest()
-    if algorithm == "ripemd160":
-        return hashlib.new("ripemd160", message).digest()
-    if algorithm == "hash160":
-        return hashlib.new("ripemd160", hashlib.sha256(message).digest()).digest()
-    if algorithm == "hash256":
-        return hashlib.sha256(hashlib.sha256(message).digest()).digest()
-    raise ValueError("Unsupported collision algorithm")
-
-
-def _stop_managed_solver(assignment_id):
-    with _MANAGED_SOLVERS_LOCK:
-        state = _MANAGED_SOLVERS.get(str(assignment_id))
-        if state:
-            state["stop"].set()
-
-
-def _start_managed_solver(assignment_id, job_id, worker_id):
-    key = str(assignment_id)
-    with _MANAGED_SOLVERS_LOCK:
-        current = _MANAGED_SOLVERS.get(key)
-        if current and current["thread"].is_alive():
-            return
-        stop = threading.Event()
-        state = {"stop": stop}
-        _MANAGED_SOLVERS[key] = state
-
-    def runner():
-        seen = {}
-        cursor = 0
-        last_heartbeat = 0.0
-        last_checkpoint = 0.0
-        started = time.monotonic()
-        try:
-            with db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "select c.challenge_type,c.verification,c.status,c.balance_btc "
-                        "from jobs j join challenge_registry c on c.id=j.puzzle_id "
-                        "where j.id=%s",
-                        (job_id,),
-                    )
-                    challenge = cur.fetchone()
-            if not challenge or challenge[2] != "OPEN + FUNDED" or Decimal(str(challenge[3] or 0)) <= 0:
-                return
-            allowed = (challenge[1] or {}).get("allowed_algorithms") or []
-            algorithm = next((str(x).lower() for x in allowed if str(x).lower() in {"sha256","ripemd160","hash160","hash256"}), "")
-            if not algorithm:
-                return
-
-            max_candidates = max(0, int(os.environ.get("SATOSHI_HUNT_MANAGED_MAX_CANDIDATES", "0")))
-            max_memory_mb = max(32, int(os.environ.get("SATOSHI_HUNT_MANAGED_MAX_MEMORY_MB", "128")))
-            max_entries = max(1000, (max_memory_mb * 1024 * 1024) // 96)
-
-            with db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "update job_assignments set status='RUNNING',started_at=coalesce(started_at,now()),last_heartbeat_at=now() "
-                        "where id=%s and worker_id=%s and status in ('ASSIGNED','RUNNING')",
-                        (assignment_id, worker_id),
-                    )
-                    cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'", (job_id,))
-                    record_audit_event(cur, "AUTO_SOLVER_STARTED", "assignment", assignment_id, worker_id=worker_id,
-                                        payload={"job_id":str(job_id),"algorithm":algorithm,"mode":"managed_server_solver"})
-
-            while not stop.is_set():
-                if max_candidates and cursor >= max_candidates:
-                    break
-                # If an operator/user stop or stale-expiry released the
-                # assignment, terminate the managed solver promptly even if
-                # the stop event was not observed in the same process.
-                with db() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("select status from job_assignments where id=%s", (assignment_id,))
-                        current_assignment = cur.fetchone()
-                if not current_assignment or current_assignment[0] != "RUNNING":
-                    break
-                message = b"satoshi-hunt:" + cursor.to_bytes(8, "big")
-                digest = _managed_hash_digest(algorithm, message)
-                previous = seen.get(digest)
-                if previous is not None and previous != message:
-                    candidate = f"{algorithm}:{previous.hex()}:{message.hex()}"
-                    with db() as conn:
-                        with conn.cursor() as cur:
-                            cur.execute(
-                                "select id from work_claims where job_id=%s and worker_id=%s and candidate_hash=%s limit 1",
-                                (job_id, worker_id, candidate),
-                            )
-                            if not cur.fetchone():
-                                claim_id = uuid4()
-                                cur.execute(
-                                    "insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) "
-                                    "values(%s,%s,%s,%s,'TESTED',%s,now())",
-                                    (claim_id,job_id,worker_id,candidate,max(0,int(time.monotonic()-started))),
-                                )
-                                result = auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate)
-                                record_audit_event(cur, "AUTO_SOLVER_RESULT", "assignment", assignment_id, worker_id=worker_id,
-                                                    payload={"job_id":str(job_id),"verified":bool(result and result.get("verified"))})
-                    if result and result.get("verified"):
-                        with db() as conn:
-                            with conn.cursor() as cur:
-                                cur.execute(
-                                    "update job_assignments set status='COMPLETED',completed_at=now(),last_heartbeat_at=now() where id=%s",
-                                    (assignment_id,),
-                                )
-                        return
-                seen[digest] = message
-                cursor += 1
-                if len(seen) >= max_entries:
-                    seen.clear()
-                now = time.monotonic()
-                if now - last_heartbeat >= 10:
-                    with db() as conn:
-                        with conn.cursor() as cur:
-                            cur.execute(
-                                "select status from job_assignments where id=%s for update",
-                                (assignment_id,),
-                            )
-                            assignment_row = cur.fetchone()
-                            if not assignment_row or assignment_row[0] != "RUNNING":
-                                # Never keep hashing after the database says this
-                                # assignment was stopped, switched, or expired.
-                                stop.set()
-                                break
-                            cur.execute(
-                                "update job_assignments set last_heartbeat_at=now() where id=%s and status='RUNNING'",
-                                (assignment_id,),
-                            )
-                    last_heartbeat = now
-                if now - last_checkpoint >= 30:
-                    last_checkpoint = now
-            with db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "update job_assignments set status='COMPLETED',completed_at=now(),last_heartbeat_at=null "
-                        "where id=%s and status='RUNNING'",
-                        (assignment_id,),
-                    )
-                    cur.execute(
-                        "update jobs set status='QUEUED' where id=%s and status='RUNNING' "
-                        "and not exists (select 1 from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING'))",
-                        (job_id,job_id),
-                    )
-                    record_audit_event(cur, "AUTO_SOLVER_STOPPED", "assignment", assignment_id, worker_id=worker_id,
-                                        payload={"job_id":str(job_id),"cursor":cursor,"reason":"stop_or_bound"})
-        except Exception as exc:
-            logging.exception("Managed solver failed for assignment %s: %s", assignment_id, type(exc).__name__)
-            try:
-                with db() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')", (assignment_id,))
-                        record_audit_event(cur, "AUTO_SOLVER_ERROR", "assignment", assignment_id, worker_id=worker_id,
-                                            payload={"job_id":str(job_id),"error":type(exc).__name__})
-            except Exception:
-                logging.exception("Could not release failed managed solver assignment %s", assignment_id)
-        finally:
-            with _MANAGED_SOLVERS_LOCK:
-                _MANAGED_SOLVERS.pop(key, None)
-
-    thread = threading.Thread(target=runner, name=f"managed-solver-{key[:8]}", daemon=True)
-    state["thread"] = thread
-    thread.start()
-
-
-def _recover_managed_solvers():
-    """Resume website-started solvers after an API process restart/deploy."""
-    try:
-        with db() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """select a.id,a.job_id,a.worker_id
-                       from job_assignments a
-                       join jobs j on j.id=a.job_id
-                       join challenge_registry c on c.id=j.puzzle_id
-                       where a.status='RUNNING'
-                         and j.scope='public-reward-challenge'
-                         and c.status='OPEN + FUNDED'
-                         and c.balance_btc>0
-                       order by a.started_at asc"""
-                )
-                assignments=cur.fetchall()
-        for assignment_id,job_id,worker_id in assignments:
-            _start_managed_solver(assignment_id,job_id,worker_id)
-    except Exception:
-        logging.exception("Could not recover managed solvers after startup")
-
-
-@app.on_event("startup")
-def recover_managed_solvers():
-    # Run recovery in a background thread so API startup/health checks are not
-    # blocked by database work or solver initialization.
-    threading.Thread(
-        target=_recover_managed_solvers,
-        name="managed-solver-recovery",
-        daemon=True,
-    ).start()
-
-
-@app.on_event("startup")
-def validate_treasury_configuration():
-    if not valid_btc_mainnet_address(TREASURY_BTC_ADDRESS):
-        raise RuntimeError("TREASURY_BTC_ADDRESS is not a valid Bitcoin mainnet address")
-
 
 ALLOWED_FRONTEND_ORIGINS = list(dict.fromkeys(
     origin for origin in (FRONTEND_ORIGIN, "https://arslancyan.github.io") if origin
@@ -329,28 +109,6 @@ def db():
     if not DATABASE_URL:
         raise HTTPException(503, "DATABASE_URL is not configured")
     return psycopg.connect(DATABASE_URL)
-
-def treasury_available_btc(cur) -> Decimal:
-    cur.execute("select funded_btc-reserved_btc from treasury_accounting where id=%s for update", (TREASURY_WALLET_ID,))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(503, "Treasury accounting is not initialized")
-    return Decimal(str(row[0]))
-
-def treasury_config(cur):
-    cur.execute("select address,network,status from treasury_wallets where id=%s", (TREASURY_WALLET_ID,))
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(503, "Treasury wallet is not initialized")
-    return {"address": row[0], "network": row[1], "status": row[2]}
-
-def treasury_ledger(cur, entry_type, amount, reference_type, reference_id=None, account_id=None, destination_btc_address=None):
-    cur.execute(
-        "insert into treasury_ledger(id,wallet_id,entry_type,amount_btc,reference_type,reference_id,account_id,destination_btc_address) "
-        "values(%s,%s,%s,%s,%s,%s,%s,%s)",
-        (uuid4(), TREASURY_WALLET_ID, entry_type, amount, reference_type,
-         str(reference_id) if reference_id else None, account_id, destination_btc_address),
-    )
 
 
 def record_audit_event(cur, event_type, entity_type, entity_id, account_id=None, worker_id=None, payload=None):
@@ -881,9 +639,6 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             else:
                 job_id=uuid4()
                 cur.execute("insert into jobs(id,puzzle_id,scope,status) values(%s,%s,'public-reward-challenge','QUEUED')",(job_id,challenge_id))
-            # Serialize puzzle switching per account so two simultaneous RUN requests
-            # cannot both observe zero active assignments and create two active puzzles.
-            cur.execute("select pg_advisory_xact_lock(hashtext(%s))",(str(account_id),))
             # One active puzzle per account. Switching puzzles pauses the previous assignment.
             cur.execute(
                 """select a.id,a.job_id,a.worker_id,a.status,j.puzzle_id
@@ -902,11 +657,8 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                               "status":old_status}
                     idempotency_store(cur,account_id,request,payload,response)
                     return response
-                # Switching puzzles must also stop the previous managed solver.
-                # Releasing the DB row alone is not enough to stop its hashing thread.
-                _stop_managed_solver(old_assignment_id)
                 cur.execute(
-                    "update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
+                    "update job_assignments set status='PAUSED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
                     (old_assignment_id,),
                 )
                 cur.execute(
@@ -919,7 +671,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                     (old_job_id,old_job_id),
                 )
                 record_audit_event(
-                    cur,"RELEASED","assignment",old_assignment_id,account_id,old_worker_id,
+                    cur,"PAUSED","assignment",old_assignment_id,account_id,old_worker_id,
                     {"job_id":str(old_job_id),"puzzle_id":old_puzzle_id,
                      "reason":"account_switched_puzzle","next_challenge_id":challenge_id},
                 )
@@ -928,7 +680,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             cur.execute(
                 """select a.id,a.job_id from job_assignments a
                    join jobs j on j.id=a.job_id
-                   where a.worker_id=%s and j.puzzle_id=%s and a.status='RELEASED'
+                   where a.worker_id=%s and j.puzzle_id=%s and a.status='PAUSED'
                    order by a.assigned_at desc limit 1 for update""",
                 (body.worker_id,challenge_id),
             )
@@ -950,11 +702,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                                payload={"job_id":str(job_id),"assignment_id":str(aid),"selection":"marketplace"})
             response={"challenge_id":challenge_id,"job_id":str(job_id),"assignment_id":str(aid),"worker_id":str(body.worker_id),"status":"ASSIGNED"}
             idempotency_store(cur,account_id,request,payload,response)
-            # Start the managed solver only after this transaction commits.
-            managed_solver_start=(aid,job_id,body.worker_id)
-
-    _start_managed_solver(*managed_solver_start)
-    return response
+            return response
 
 
 @app.post("/creator/challenges")
@@ -1222,143 +970,6 @@ def me(account_id: UUID = Depends(account_id_from_auth)):
     return {"id": str(row[0]), "email": row[1], "btc_payout_address": row[2], "created_at": row[3]}
 
 
-
-@app.get("/account/rewards")
-def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "select coalesce(available_btc,0) from reward_balances where account_id=%s",
-                (account_id,),
-            )
-            row = cur.fetchone()
-            available = Decimal(str(row[0] if row else 0))
-            cur.execute(
-                "select id,amount_btc,payout_address,status,external_reference,created_at,processed_at "
-                "from withdrawal_requests where account_id=%s order by created_at desc limit 10",
-                (account_id,),
-            )
-            withdrawals = [
-                {
-                    "id": str(x[0]),
-                    "amount_btc": float(x[1]),
-                    "payout_address": x[2],
-                    "status": x[3],
-                    "external_reference": x[4],
-                    "created_at": x[5],
-                    "processed_at": x[6],
-                }
-                for x in cur.fetchall()
-            ]
-    return {"available_btc": float(available), "withdrawals": withdrawals}
-
-
-@app.put("/account/payout-address")
-def update_account_payout_address(payload: dict, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    return _update_account_payout_address_sync(request, account_id, payload)
-
-
-def _update_account_payout_address_sync(request: Request, account_id: UUID, payload):
-    # Kept as a small helper so the account route remains compatible with the
-    # existing synchronous DB layer.
-    address = str(payload.get("btc_payout_address", "")).strip()
-    if not valid_btc_mainnet_address(address):
-        raise HTTPException(422, "A valid Bitcoin mainnet payout address is required")
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "update accounts set btc_payout_address=%s where id=%s returning id",
-                (address, account_id),
-            )
-            if not cur.fetchone():
-                raise HTTPException(404, "Account not found")
-            record_audit_event(
-                cur, "PAYOUT_ADDRESS_UPDATED", "account", account_id,
-                account_id=account_id, payload={"address_present": True},
-            )
-    return {"status": "SAVED", "btc_payout_address": address}
-
-
-@app.post("/account/withdrawals")
-def create_account_withdrawal(payload: dict, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay = idempotency_replay(cur, account_id, request, payload)
-            if replay is not None:
-                return replay
-
-            cur.execute(
-                "select btc_payout_address from accounts where id=%s for update",
-                (account_id,),
-            )
-            account = cur.fetchone()
-            if not account:
-                raise HTTPException(404, "Account not found")
-            payout_address = (account[0] or "").strip()
-            if not payout_address:
-                raise HTTPException(409, "Save a valid BTC payout address before withdrawing")
-
-            try:
-                requested = Decimal(str(payload.get("amount_btc")))
-            except Exception:
-                raise HTTPException(422, "Withdrawal amount must be a valid BTC amount")
-            if requested <= 0:
-                raise HTTPException(422, "Withdrawal amount must be greater than zero")
-            if requested > MAX_SINGLE_PAYOUT_BTC:
-                raise HTTPException(409, f"Withdrawal exceeds the single-payout limit of {MAX_SINGLE_PAYOUT_BTC} BTC")
-
-            cur.execute(
-                "select coalesce(available_btc,0) from reward_balances where account_id=%s for update",
-                (account_id,),
-            )
-            row = cur.fetchone()
-            available = Decimal(str(row[0] if row else 0))
-            if available <= 0 or requested > available:
-                raise HTTPException(409, "There is no available reward balance to withdraw at this time")
-
-            treasury_available = treasury_available_btc(cur)
-            if treasury_available < requested:
-                raise HTTPException(409, "Treasury does not currently have enough available BTC for this withdrawal")
-
-            cur.execute(
-                "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
-                "where account_id=%s and available_btc >= %s",
-                (requested, account_id, requested),
-            )
-            if cur.rowcount != 1:
-                raise HTTPException(409, "Reward balance changed. Please refresh and try again.")
-
-            wid = uuid4()
-            cur.execute(
-                "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) "
-                "values(%s,%s,%s,%s,'QUEUED')",
-                (wid, account_id, requested, payout_address),
-            )
-            cur.execute(
-                "update treasury_accounting set reserved_btc=reserved_btc+%s,updated_at=now() where id=%s",
-                (requested, TREASURY_WALLET_ID),
-            )
-            treasury_ledger(
-                cur, "USER_WITHDRAWAL_RESERVED", requested, "WITHDRAWAL", wid,
-                account_id=account_id, destination_btc_address=payout_address,
-            )
-            record_audit_event(
-                cur, "WITHDRAWAL_QUEUED", "withdrawal", wid,
-                account_id=account_id,
-                payload={"amount_btc": str(requested), "payout_address_present": True},
-            )
-            response = {
-                "status": "QUEUED",
-                "withdrawal_id": str(wid),
-                "amount_btc": float(requested),
-                "payout_address": payout_address,
-            }
-            idempotency_store(cur, account_id, request, payload, response)
-            return response
-
-
 def require_owner(cur, account_id: UUID):
     if not OWNER_EMAIL:
         raise HTTPException(503, "OWNER_EMAIL is not configured")
@@ -1533,7 +1144,7 @@ def worker_heartbeat(worker_id: UUID, request: Request, token_worker_id: UUID = 
 def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("select j.id,j.puzzle_id,j.status,j.created_at,j.completed_at,a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,a.last_heartbeat_at,a.verified_seconds from jobs j left join lateral (select a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,a.last_heartbeat_at,a.verified_seconds from job_assignments a join workers w on w.id=a.worker_id where a.job_id=j.id and w.account_id=%s order by a.assigned_at desc limit 1) a on true where j.scope='public-reward-challenge' order by j.created_at desc limit 50", (account_id,))
+            cur.execute("select j.id,j.puzzle_id,j.status,j.created_at,j.completed_at,a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,a.last_heartbeat_at,a.verified_seconds from jobs j left join job_assignments a on a.job_id=j.id and a.status in ('ASSIGNED','RUNNING') where j.scope='public-reward-challenge' order by j.created_at desc limit 50")
             rows = cur.fetchall()
     return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4],"assignment":None if r[5] is None else {"id":str(r[5]),"worker_id":str(r[6]),"status":r[7],"assigned_at":r[8],"started_at":r[9],"completed_at":r[10],"last_heartbeat_at":r[11],"contribution_seconds":r[12]}} for r in rows]
 
@@ -1628,61 +1239,6 @@ def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingest
     return {"challenge_id":body.id,"job_id":str(job_id),"status":"QUEUED"}
 
 
-
-
-@app.get("/admin/workers/live")
-def admin_live_workers(account_id: UUID = Depends(account_id_from_auth)):
-    """Owner-only operational view of workers actually leased to active assignments."""
-    with db() as conn:
-        with conn.cursor() as cur:
-            require_owner(cur, account_id)
-            cur.execute(
-                """
-                select
-                    a.id,
-                    a.job_id,
-                    a.worker_id,
-                    w.account_id,
-                    w.label,
-                    a.status,
-                    a.assigned_at,
-                    a.started_at,
-                    a.last_heartbeat_at,
-                    extract(epoch from (now() - a.last_heartbeat_at)) as heartbeat_age_seconds,
-                    j.puzzle_id,
-                    j.status as job_status
-                from job_assignments a
-                join workers w on w.id=a.worker_id
-                join jobs j on j.id=a.job_id
-                where a.status='RUNNING'
-                order by a.started_at asc nulls last
-                """
-            )
-            rows=cur.fetchall()
-    workers=[]
-    for r in rows:
-        heartbeat_age = None if r[9] is None else float(r[9])
-        workers.append({
-            "assignment_id": str(r[0]),
-            "job_id": str(r[1]),
-            "worker_id": str(r[2]),
-            "account_id": str(r[3]),
-            "worker_label": r[4],
-            "assignment_status": r[5],
-            "assigned_at": r[6],
-            "started_at": r[7],
-            "last_heartbeat_at": r[8],
-            "heartbeat_age_seconds": heartbeat_age,
-            "heartbeat_healthy": heartbeat_age is not None and heartbeat_age <= 45,
-            "puzzle_id": r[10],
-            "job_status": r[11],
-        })
-    return {
-        "active_workers": sum(1 for x in workers if x["heartbeat_healthy"]),
-        "running_assignments": len(workers),
-        "workers": workers,
-        "checked_at": datetime.now(timezone.utc),
-    }
 
 
 @app.get("/admin/rewards")
@@ -1890,18 +1446,10 @@ def expire_stale_assignments(cur):
         (cutoff,),
     )
     for assignment_id,job_id,worker_id in cur.fetchall():
-        # A managed solver can outlive the HTTP request that started it. Stop
-        # that process too when the database assignment expires, otherwise the
-        # UI may show EXPIRED while the server keeps consuming CPU.
-        _stop_managed_solver(assignment_id)
         cur.execute(
-            """update jobs set status='QUEUED',completed_at=null
-               where id=%s and status in ('RUNNING','QUEUED')
-                 and not exists (
-                   select 1 from job_assignments
-                   where job_id=%s and status in ('ASSIGNED','RUNNING')
-                 )""",
-            (job_id,job_id),
+            "update jobs set status='QUEUED',completed_at=null "
+            "where id=%s and status in ('RUNNING','QUEUED')",
+            (job_id,),
         )
         cur.execute("select account_id from workers where id=%s", (worker_id,))
         account_row=cur.fetchone()
@@ -1951,38 +1499,6 @@ def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUI
     return response
 
 
-@app.post("/assignments/{assignment_id}/stop")
-def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    """Stop the account-owned public puzzle assignment and release the job back to QUEUED."""
-    payload={"assignment_id":str(assignment_id)}
-    with db() as conn:
-        with conn.cursor() as cur:
-            # Do not run expire_stale_assignments() here. A stale assignment is
-            # still explicitly stoppable by its owner. The old ordering expired
-            # it first, returned "Assignment is EXPIRED", and never signalled the
-            # managed solver, which could keep running in the background.
-            row=assignment_for_account(cur,assignment_id,account_id)
-            if not row: raise HTTPException(404,"Assignment not found")
-            if row[3] not in ("ASSIGNED","RUNNING","EXPIRED"):
-                raise HTTPException(409,f"Assignment is {row[3]}")
-            _stop_managed_solver(assignment_id)
-            now=datetime.now(timezone.utc)
-            cur.execute(
-                "update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING','EXPIRED')",
-                (assignment_id,),
-            )
-            if cur.rowcount != 1:
-                raise HTTPException(409,"Assignment changed before stop")
-            cur.execute(
-                """update jobs set status='QUEUED',completed_at=null
-                   where id=%s and status in ('QUEUED','RUNNING')
-                     and not exists (select 1 from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING'))""",
-                (row[1],row[1]),
-            )
-            record_audit_event(cur,"RELEASED","assignment",assignment_id,account_id,row[2],payload={**payload,"reason":"account_requested"})
-            response={"assignment_id":str(assignment_id),"status":"RELEASED","stopped_at":now}
-    return response
-
 @app.post("/assignments/{assignment_id}/heartbeat")
 def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
     enforce_rate_limit(request, "write")
@@ -2031,24 +1547,7 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
             cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s and status='RUNNING'",(now,now,seconds,assignment_id))
             if cur.rowcount != 1:
                 raise HTTPException(409, "Assignment changed before completion")
-            cur.execute(
-                """update jobs set status=case
-                       when exists (
-                         select 1 from job_assignments
-                         where job_id=%s and status in ('ASSIGNED','RUNNING')
-                       ) then 'RUNNING'
-                       else 'COMPLETED'
-                     end,
-                     completed_at=case
-                       when exists (
-                         select 1 from job_assignments
-                         where job_id=%s and status in ('ASSIGNED','RUNNING')
-                       ) then null
-                       else %s
-                     end
-                   where id=%s and status='RUNNING'""",
-                (row[1],row[1],now,row[1]),
-            )
+            cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
             period_start=started_at.date()
             end_date=now.date()
             while period_start <= end_date:
@@ -2073,7 +1572,7 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
 
 def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash):
     cur.execute(
-        "select j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification,c.payout "
+        "select j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification "
         "from jobs j join challenge_registry c on c.id=j.puzzle_id "
         "where j.id=%s and j.scope='public-reward-challenge' for update",
         (job_id,),
@@ -2083,7 +1582,7 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
         return None
     record={
         "id":job[0],"type":job[2],"reward_btc":job[3],"balance_btc":job[4],
-        "status":job[5],"rules":job[6],"provenance":job[7],"verification":job[8],"payout":job[9],
+        "status":job[5],"rules":job[6],"provenance":job[7],"verification":job[8],
     }
     result=verify_candidate_hash(record,candidate_hash)
     if not result["verified"]:
@@ -2110,10 +1609,6 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
     event=build_reward_event(account_id,job[0],job[3])
     if Decimal(str(event["worker_share_btc"])) + Decimal(str(event["platform_fee_btc"])) != Decimal(str(event["gross_reward_btc"])):
         raise HTTPException(500,"Reward split integrity check failed")
-    treasury_available = treasury_available_btc(cur)
-    gross_reward = Decimal(str(event["gross_reward_btc"]))
-    if treasury_available < gross_reward:
-        raise HTTPException(409, "Treasury is underfunded for this verified reward")
     reward_id=uuid4()
     cur.execute(
         "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id,approved_at) "
@@ -2125,13 +1620,6 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
     if not inserted:
         return {"verified":True,"already_credited":True}
     reward_id=inserted[0]
-    worker_share = Decimal(str(event["worker_share_btc"]))
-    owner_share = Decimal(str(event["platform_fee_btc"]))
-    cur.execute(
-        "update treasury_accounting set solver_liability_btc=solver_liability_btc+%s, owner_liability_btc=owner_liability_btc+%s, updated_at=now() where id=%s",
-        (worker_share, owner_share, TREASURY_WALLET_ID),
-    )
-    treasury_ledger(cur, "REWARD_LIABILITY", gross_reward, "REWARD_EVENT", reward_id, account_id=account_id)
     cur.execute(
         "insert into reward_balances(account_id,available_btc,updated_at) values(%s,%s,now()) "
         "on conflict(account_id) do update set available_btc=reward_balances.available_btc+excluded.available_btc,updated_at=now()",
@@ -2142,32 +1630,31 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
         "on conflict(reward_event_id,entry_type) do nothing",
         (uuid4(),account_id,reward_id,event["worker_share_btc"]),
     )
-    owner_address=(record.get("payout") or {}).get("owner_btc_address")
-    if not owner_address:
-        raise HTTPException(500,"Challenge owner BTC address is missing from the verified payout metadata")
     cur.execute(
-        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) values(%s,%s,%s,'PLATFORM_FEE',%s,%s)",
-        (uuid4(),account_id,reward_id,event["platform_fee_btc"],owner_address),
+        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) values(%s,%s,%s,'PLATFORM_FEE',%s,%s) "
+        "on conflict(reward_event_id,entry_type) do nothing",
+        (uuid4(),account_id,reward_id,event["platform_fee_btc"],OWNER_PLATFORM_FEE_BTC_ADDRESS),
     )
-    treasury_ledger(cur, "OWNER_LIABILITY", owner_share, "REWARD_EVENT", reward_id,
-                    account_id=account_id, destination_btc_address=owner_address)
+    cur.execute("select btc_payout_address from accounts where id=%s for update",(account_id,))
+    payout=cur.fetchone()
     withdrawal_queued=False
-    cur.execute(
-        "insert into notifications(id,account_id,event_type,title,message,metadata) "
-        "values(%s,%s,'REWARD_CREDITED','Reward credited','Your verified puzzle solution was accepted. "
-        "Your 85% solver reward has been credited to your BTC Rewards balance.',%s::jsonb)",
-        (uuid4(),account_id,json.dumps({
-            "reward_id":str(reward_id),
-            "job_id":str(job_id),
-            "reward_btc":str(event["worker_share_btc"]),
-            "owner_share_btc":str(event["platform_fee_btc"]),
-            "owner_btc_address":owner_address,
-        })),
-    )
+    if payout and payout[0]:
+        cur.execute(
+            "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
+            "where account_id=%s and available_btc >= %s",
+            (event["worker_share_btc"],account_id,event["worker_share_btc"]),
+        )
+        if cur.rowcount != 1:
+            raise HTTPException(500,"Reward balance reservation failed")
+        cur.execute(
+            "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) values(%s,%s,%s,%s,'QUEUED')",
+            (uuid4(),account_id,event["worker_share_btc"],payout[0]),
+        )
+        withdrawal_queued=True
     record_audit_event(
         cur,"AUTO_REWARD_CREDITED","reward_event",reward_id,account_id,worker_id,
         {"job_id":str(job_id),"claim_id":str(claim_id),"worker_share_btc":event["worker_share_btc"],
-         "platform_fee_btc":event["platform_fee_btc"],"withdrawal_queued":withdrawal_queued,"treasury_address":TREASURY_BTC_ADDRESS,"custody":"central_treasury"},
+         "platform_fee_btc":event["platform_fee_btc"],"withdrawal_queued":withdrawal_queued,"custody":"none"},
     )
     return {
         "verified":True,"reward_id":str(reward_id),
@@ -2355,141 +1842,6 @@ def scheduler_recommendations(limit: int = 10):
             return {"recommendations": recommendations[:limit]}
 
 
-class PSBTReady(BaseModel):
-    unsigned_psbt: str = Field(min_length=20, max_length=200000)
-    signer_id: str = Field(min_length=1, max_length=120)
-
-class SignedPayout(BaseModel):
-    signed_psbt: str = Field(min_length=20, max_length=400000)
-    final_tx_hex: str = Field(min_length=100, max_length=400000)
-    signer_id: str = Field(min_length=1, max_length=120)
-
-class BroadcastPayout(BaseModel):
-    txid: str = Field(min_length=64, max_length=64)
-    broadcaster_id: str = Field(min_length=1, max_length=120)
-
-def require_payout_signer(request: Request):
-    if not PAYOUT_SIGNER_TOKEN:
-        raise HTTPException(503, "Payout signer is not configured")
-    supplied = request.headers.get("x-payout-signer-token", "")
-    if not hmac.compare_digest(supplied, PAYOUT_SIGNER_TOKEN):
-        raise HTTPException(401, "Invalid payout signer credential")
-
-def _read_varint(buf, offset):
-    if offset >= len(buf):
-        raise ValueError("truncated varint")
-    n = buf[offset]
-    offset += 1
-    if n < 0xfd:
-        return n, offset
-    size = {0xfd: 2, 0xfe: 4, 0xff: 8}[n]
-    if offset + size > len(buf):
-        raise ValueError("truncated varint")
-    return int.from_bytes(buf[offset:offset + size], "little"), offset + size
-
-def _tx_outputs(tx_hex: str):
-    try:
-        raw = bytes.fromhex(tx_hex)
-        off = 4
-        vin_count, off = _read_varint(raw, off)
-        segwit = vin_count == 0
-        if segwit:
-            if off + 2 > len(raw) or raw[off] != 1:
-                raise ValueError("invalid segwit marker")
-            off += 2
-            vin_count, off = _read_varint(raw, off)
-        for _ in range(vin_count):
-            if off + 36 > len(raw): raise ValueError("truncated input")
-            off += 36
-            n, off = _read_varint(raw, off); off += n + 4
-            if off > len(raw): raise ValueError("truncated input")
-        vout_count, off = _read_varint(raw, off)
-        outputs=[]
-        for _ in range(vout_count):
-            if off + 8 > len(raw): raise ValueError("truncated output")
-            amount=int.from_bytes(raw[off:off+8],"little"); off += 8
-            n, off = _read_varint(raw, off)
-            script=raw[off:off+n]; off += n
-            outputs.append((amount, script))
-        if segwit:
-            for _ in range(vin_count):
-                n, off = _read_varint(raw, off)
-                for __ in range(n):
-                    ln, off = _read_varint(raw, off); off += ln
-        if off + 4 != len(raw): raise ValueError("unexpected transaction trailing data")
-        return raw, outputs
-    except (ValueError, IndexError, KeyError) as exc:
-        raise HTTPException(422, f"Invalid Bitcoin transaction: {exc}")
-
-def _scriptpubkey_for_mainnet_address(address: str) -> bytes:
-    value=address.strip()
-    if _base58check_valid(value):
-        n=0
-        for ch in value: n=n*58+BASE58_ALPHABET.index(ch)
-        raw=n.to_bytes((n.bit_length()+7)//8,"big") if n else b""
-        leading=len(value)-len(value.lstrip("1")); raw=b"\\x00"*leading+raw
-        payload=raw[:-4]; version=payload[0]; h=payload[1:]
-        if version == 0 and len(h) == 20: return b"\\x76\\xa9\\x14"+h+b"\\x88\\xac"
-        if version == 5 and len(h) == 20: return b"\\xa9\\x14"+h+b"\\x87"
-        raise HTTPException(422,"Unsupported payout address type")
-    a=value.lower(); pos=a.rfind("1")
-    data=[BECH32_CHARSET.index(ch) for ch in a[pos+1:]]
-    payload=_convertbits(data[1:-6],5,8,False); version=data[0]
-    h=bytes(payload)
-    if version == 0 and len(h) in (20,32): return bytes([0,len(h)])+h
-    if version == 1 and len(h)==32: return b"\\x51\\x20"+h
-    raise HTTPException(422,"Unsupported payout address type")
-
-def _psbt_unsigned_tx(psbt_text: str) -> bytes:
-    try:
-        raw=base64.b64decode(psbt_text, validate=True)
-        if not raw.startswith(b"psbt\\xff"): raise ValueError("invalid PSBT magic")
-        off=5
-        while True:
-            klen,off=_read_varint(raw,off)
-            if klen == 0: break
-            if off+klen > len(raw): raise ValueError("truncated global key")
-            key=raw[off:off+klen]; off += klen
-            vlen,off=_read_varint(raw,off)
-            if off+vlen > len(raw): raise ValueError("truncated global value")
-            val=raw[off:off+vlen]; off += vlen
-            if key == b"\\x00": return val
-        raise ValueError("PSBT does not contain a global unsigned transaction")
-    except (ValueError, IndexError) as exc:
-        raise HTTPException(422, f"Invalid PSBT: {exc}")
-
-def _payout_digest(amount_btc, destination, tx_bytes):
-    amount_sat=int(Decimal(str(amount_btc))*Decimal("100000000"))
-    return hashlib.sha256(json.dumps(
-        {"amount_sat":amount_sat,"destination":destination,"unsigned_tx":base64.b64encode(tx_bytes).decode()},
-        sort_keys=True,separators=(",",":")).encode()).hexdigest()
-
-def _verify_payout_transaction(tx_hex, amount_btc, destination):
-    raw,outputs=_tx_outputs(tx_hex)
-    expected_script=_scriptpubkey_for_mainnet_address(destination)
-    amount_sat=int(Decimal(str(amount_btc))*Decimal("100000000"))
-    if sum(n for n,script in outputs if script == expected_script) != amount_sat:
-        raise HTTPException(422,"Signed transaction does not pay the exact withdrawal amount to the destination")
-    txid=hashlib.sha256(hashlib.sha256(raw).digest()).digest()[::-1].hex()
-    return txid,raw
-
-def validate_psbt_text(value: str) -> str:
-    try:
-        raw = base64.b64decode(value, validate=True)
-    except Exception:
-        raise HTTPException(422, "PSBT must be valid base64")
-    if not raw.startswith(b"psbt\xff"):
-        raise HTTPException(422, "Invalid PSBT magic header")
-    if len(raw) > 300000:
-        raise HTTPException(413, "PSBT is too large")
-    return value
-
-def validate_txid(value: str) -> str:
-    v=value.strip().lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", v):
-        raise HTTPException(422, "txid must be a 64-character hexadecimal Bitcoin transaction id")
-    return v
-
 class WithdrawalComplete(BaseModel):
     external_reference: str = Field(min_length=3, max_length=200)
 
@@ -2540,133 +1892,35 @@ def start_withdrawal_processing(withdrawal_id: UUID, request: Request, account_i
 
 
 @app.post("/admin/withdrawals/{withdrawal_id}/complete")
-def complete_withdrawal_legacy_blocked(withdrawal_id: UUID, request: Request,
-                                       account_id: UUID = Depends(account_id_from_auth)):
+def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     enforce_rate_limit(request, "write")
-    raise HTTPException(410, "Manual TXID settlement is disabled. Use the secure PSBT settlement rail.")
-
-@app.post("/internal/payouts/{withdrawal_id}/psbt")
-def submit_unsigned_psbt(withdrawal_id: UUID, body: PSBTReady, request: Request):
-    require_payout_signer(request)
-    psbt=validate_psbt_text(body.unsigned_psbt)
+    if not validate_external_txid(body.external_reference):
+        raise HTTPException(422, "external_reference must be a 64-character Bitcoin transaction id")
+    payload={"withdrawal_id":str(withdrawal_id),"external_reference":body.external_reference}
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "select ps.id,ps.status,ps.amount_btc,ps.destination_btc_address "
-                "from payout_settlements ps join withdrawal_requests w on w.id=ps.withdrawal_id "
-                "where ps.withdrawal_id=%s for update",
-                (withdrawal_id,),
-            )
-            row=cur.fetchone()
-            if not row: raise HTTPException(404,"Payout settlement not found")
-            if row[1] not in ("PSBT_REQUESTED","PSBT_READY"): raise HTTPException(409,"Settlement is not awaiting an unsigned PSBT")
-            cur.execute(
-                "update payout_settlements set unsigned_psbt=%s,signer_id=%s,status='PSBT_READY',updated_at=now() where id=%s",
-                (psbt,body.signer_id,row[0]),
-            )
-            cur.execute(
-                "insert into payout_settlement_events(id,settlement_id,event_type,signer_id,metadata) values(%s,%s,'PSBT_READY',%s,%s::jsonb)",
-                (uuid4(),row[0],body.signer_id,json.dumps({"amount_btc":str(row[2]),"destination_btc_address":row[3]})),
-            )
-    return {"withdrawal_id":str(withdrawal_id),"settlement_id":str(row[0]),"status":"PSBT_READY"}
-
-@app.post("/internal/payouts/{withdrawal_id}/signed")
-def submit_signed_psbt(withdrawal_id: UUID, body: SignedPayout, request: Request):
-    require_payout_signer(request)
-    signed=validate_psbt_text(body.signed_psbt)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "select id,status,unsigned_psbt,amount_btc,destination_btc_address from payout_settlements "
-                "where withdrawal_id=%s for update",(withdrawal_id,),
-            )
-            row=cur.fetchone()
-            if not row: raise HTTPException(404,"Payout settlement not found")
-            if row[1] != "PSBT_READY": raise HTTPException(409,"Settlement is not ready for signing")
-            if not row[2]: raise HTTPException(409,"Unsigned PSBT is missing")
-            signed_unsigned_tx=_psbt_unsigned_tx(signed)
-            original_unsigned_tx=_psbt_unsigned_tx(row[2])
-            if signed_unsigned_tx != original_unsigned_tx:
-                raise HTTPException(422,"Signed PSBT does not match the approved unsigned transaction")
-            digest=_payout_digest(row[3],row[4],signed_unsigned_tx)
-            cur.execute("select payout_digest from payout_settlements where id=%s",(row[0],))
-            stored_digest=cur.fetchone()[0]
-            if not stored_digest or not hmac.compare_digest(stored_digest,digest):
-                raise HTTPException(409,"Payout intent digest mismatch")
-            computed_txid,_=_verify_payout_transaction(body.final_tx_hex,row[3],row[4])
-            cur.execute(
-                "update payout_settlements set signed_psbt=%s,signed_tx_hex=%s,signer_id=%s,status='SIGNED',signed_at=now(),updated_at=now() where id=%s",
-                (signed,body.final_tx_hex,body.signer_id,row[0]),
-            )
-            cur.execute(
-                "insert into payout_settlement_events(id,settlement_id,event_type,signer_id,metadata) values(%s,%s,'SIGNED',%s,%s::jsonb)",
-                (uuid4(),row[0],body.signer_id,json.dumps({"amount_btc":str(row[3]),"destination_btc_address":row[4]})),
-            )
-    return {"withdrawal_id":str(withdrawal_id),"settlement_id":str(row[0]),"status":"SIGNED"}
-
-@app.post("/internal/payouts/{withdrawal_id}/broadcast")
-def confirm_broadcast(withdrawal_id: UUID, body: BroadcastPayout, request: Request):
-    require_payout_signer(request)
-    txid=validate_txid(body.txid)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "select id,status,amount_btc,destination_btc_address,signed_tx_hex from payout_settlements "
-                "where withdrawal_id=%s for update",(withdrawal_id,),
-            )
-            row=cur.fetchone()
-            if not row: raise HTTPException(404,"Payout settlement not found")
-            if row[1] not in ("SIGNED","BROADCAST"): raise HTTPException(409,"Settlement is not signed")
-            if not row[4]: raise HTTPException(409,"Signed PSBT is missing")
-            computed_txid,_=_verify_payout_transaction(row[4],row[2],row[3])
-            if not hmac.compare_digest(computed_txid,txid):
-                raise HTTPException(422,"Broadcast TXID does not match the signed transaction")
-            cur.execute(
-                "update payout_settlements set status='BROADCAST',txid=%s,updated_at=now(),broadcast_at=coalesce(broadcast_at,now()) where id=%s",
-                (txid,row[0]),
-            )
-            cur.execute(
-                "insert into payout_settlement_events(id,settlement_id,event_type,signer_id,txid,metadata) values(%s,%s,'BROADCAST',%s,%s,%s::jsonb)",
-                (uuid4(),row[0],body.broadcaster_id,txid,json.dumps({"amount_btc":str(row[2]),"destination_btc_address":row[3]})),
-            )
-    return {"withdrawal_id":str(withdrawal_id),"settlement_id":str(row[0]),"status":"BROADCAST","txid":txid}
-
-@app.post("/internal/payouts/{withdrawal_id}/settle")
-def settle_broadcast(withdrawal_id: UUID, request: Request):
-    require_payout_signer(request)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "select ps.id,ps.status,ps.txid,w.account_id,w.amount_btc "
-                "from payout_settlements ps join withdrawal_requests w on w.id=ps.withdrawal_id "
-                "where ps.withdrawal_id=%s for update",(withdrawal_id,),
-            )
-            row=cur.fetchone()
-            if not row: raise HTTPException(404,"Payout settlement not found")
-            if row[1] != "BROADCAST" or not row[2]: raise HTTPException(409,"Payout has not been broadcast")
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
             cur.execute(
                 "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
-                "where id=%s and status='PROCESSING' returning id",
-                (row[2],withdrawal_id),
+                "where id=%s and status in ('QUEUED','PROCESSING') returning account_id,amount_btc",
+                (body.external_reference.strip(),withdrawal_id),
             )
-            if cur.rowcount != 1: raise HTTPException(409,"Withdrawal is not PROCESSING")
-            cur.execute(
-                "update payout_settlements set status='SETTLED',settled_at=now(),updated_at=now() where id=%s",
-                (row[0],),
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(409,"Withdrawal is not queued or processing")
+            record_audit_event(
+                cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,account_id,
+                payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),
+                         "external_reference":body.external_reference.strip(),"custody":"none"},
             )
-            cur.execute(
-                "update treasury_accounting set reserved_btc=reserved_btc-%s,updated_at=now() where id=%s and reserved_btc >= %s",
-                (row[4],TREASURY_WALLET_ID,row[4]),
-            )
-            if cur.rowcount != 1: raise HTTPException(409,"Treasury reservation is inconsistent")
-            treasury_ledger(cur,"USER_WITHDRAWAL_SETTLED",row[4],"WITHDRAWAL",withdrawal_id,account_id=row[3])
-            cur.execute(
-                "insert into payout_settlement_events(id,settlement_id,event_type,txid,metadata) values(%s,%s,'SETTLED',%s,%s::jsonb)",
-                (uuid4(),row[0],row[2],json.dumps({"amount_btc":str(row[4])})),
-            )
-            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,row[3],
-                payload={"amount_btc":str(row[4]),"external_reference":row[2],"rail":"PSBT","custody":"central_treasury"})
-    return {"withdrawal_id":str(withdrawal_id),"status":"PAID","external_reference":row[2],"rail":"PSBT","custody":"central_treasury"}
+            response={"withdrawal_id":str(withdrawal_id),"status":"PAID",
+                      "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
 
 @app.post("/internal/payouts/next")
 def payout_worker_next(request: Request):
@@ -2675,18 +1929,15 @@ def payout_worker_next(request: Request):
         with conn.cursor() as cur:
             cur.execute("select pg_advisory_xact_lock(58392017)")
             cur.execute(
-                "select w.id,w.account_id,w.amount_btc,w.payout_address,w.status,ps.id,ps.status,ps.unsigned_psbt,ps.signed_psbt,ps.signed_tx_hex "
-                "from withdrawal_requests w left join payout_settlements ps on ps.withdrawal_id=w.id "
-                "where (w.status='QUEUED' and ps.id is null) "
-                "or (w.status='PROCESSING' and w.processed_at is null and w.created_at < now() - (%s || ' minutes')::interval "
-                "and (ps.id is null or ps.status in ('PSBT_REQUESTED','PSBT_READY','SIGNED'))) "
-                "order by w.created_at asc limit 1 for update skip locked",
+                "select id,account_id,amount_btc,payout_address,status from withdrawal_requests "
+                "where status='QUEUED' or (status='PROCESSING' and processed_at is null and created_at < now() - (%s || ' minutes')::interval) "
+                "order by created_at asc limit 1 for update skip locked",
                 (PAYOUT_RETRY_AFTER_MINUTES,),
             )
             row=cur.fetchone()
             if not row:
                 return {"withdrawal":None}
-            wid,account_id,amount,address,status,existing_settlement_id,existing_settlement_status,existing_unsigned_psbt,existing_signed_psbt,existing_signed_tx_hex=row
+            wid,account_id,amount,address,status=row
             amount=Decimal(str(amount))
             if amount > MAX_SINGLE_PAYOUT_BTC:
                 record_audit_event(cur,"WITHDRAWAL_BLOCKED","withdrawal",wid,account_id,
@@ -2709,42 +1960,283 @@ def payout_worker_next(request: Request):
             )
             if cur.rowcount != 1:
                 return {"withdrawal":None}
-            settlement_id=existing_settlement_id
-            settlement_status=existing_settlement_status
-            if settlement_id is None:
-                settlement_id=uuid4()
-                cur.execute(
-                    "insert into payout_settlements(id,withdrawal_id,wallet_id,amount_btc,destination_btc_address,status) "
-                    "values(%s,%s,%s,%s,%s,'PSBT_REQUESTED')",
-                    (settlement_id,wid,TREASURY_WALLET_ID,amount,address),
-                )
-                settlement_status="PSBT_REQUESTED"
-                cur.execute("update withdrawal_requests set settlement_id=%s where id=%s",(settlement_id,wid))
-                cur.execute(
-                    "insert into payout_settlement_events(id,settlement_id,event_type,metadata) values(%s,%s,'PSBT_REQUESTED',%s::jsonb)",
-                    (uuid4(),settlement_id,json.dumps({"amount_btc":str(amount),"destination_btc_address":address})),
-                )
-            else:
-                # Resume the existing safe-to-retry settlement instead of creating
-                # a second payout intent for the same withdrawal.
-                cur.execute(
-                    "insert into payout_settlement_events(id,settlement_id,event_type,metadata) values(%s,%s,'SETTLEMENT_RESUMED',%s::jsonb)",
-                    (uuid4(),settlement_id,json.dumps({"status":settlement_status})),
-                )
             record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",wid,account_id,
                 payload={"amount_btc":str(amount),"payout_address_present":True,
-                         "settlement_id":str(settlement_id),"rail":"PSBT",
                          "max_single_btc":str(MAX_SINGLE_PAYOUT_BTC),"max_daily_btc":str(MAX_DAILY_PAYOUT_BTC),
-                         "custody":"central_treasury"})
+                         "custody":"none"})
             return {"withdrawal":{"id":str(wid),"account_id":str(account_id),"amount_btc":float(amount),
-                                  "payout_address":address,"status":"PROCESSING","settlement_id":str(settlement_id),
-                                  "settlement_status":settlement_status,"unsigned_psbt":existing_unsigned_psbt,
-                                  "signed_psbt":existing_signed_psbt,"final_tx_hex":existing_signed_tx_hex,
-                                  "idempotency_key":str(wid)}}
+                                  "payout_address":address,"status":"PROCESSING","idempotency_key":str(wid)}}
 
 
 @app.post("/internal/payouts/{withdrawal_id}/complete")
-def payout_worker_complete_legacy_blocked(withdrawal_id: UUID, request: Request):
+def payout_worker_complete(withdrawal_id: UUID, body: WithdrawalComplete, request: Request):
     require_payout_worker(request)
-    raise HTTPException(410, "Legacy payout completion is disabled. Use the secure PSBT settlement rail.")
+    if not validate_external_txid(body.external_reference):
+        raise HTTPException(422, "external_reference must be a 64-character Bitcoin transaction id")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
+                "where id=%s and status='PROCESSING' returning account_id,amount_btc",
+                (body.external_reference.strip(),withdrawal_id),
+            )
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(409,"Withdrawal is not processing")
+            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,row[0],
+                payload={"amount_btc":str(row[1]),"external_reference":body.external_reference.strip(),"custody":"none"})
+            return {"withdrawal_id":str(withdrawal_id),"status":"PAID",
+                    "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
+
+
+@app.get("/network/economics")
+def network_economics():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from workers where status='ACTIVE'")
+            active_workers = cur.fetchone()[0]
+            cur.execute("select count(*) from job_assignments where status in ('ASSIGNED','RUNNING')")
+            active_assignments = cur.fetchone()[0]
+            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where period_start=current_date")
+            daily_seconds = int(cur.fetchone()[0] or 0)
+            cur.execute("select count(*) from jobs where status='QUEUED' and scope='public-reward-challenge'")
+            queued_jobs = cur.fetchone()[0]
+            cur.execute("select count(*) from challenge_registry where status='OPEN + FUNDED' and balance_btc > 0")
+            funded_challenges = cur.fetchone()[0]
+    return {
+        "active_workers": active_workers,
+        "active_assignments": active_assignments,
+        "daily_worker_hours": round(daily_seconds / 3600, 4),
+        "queued_jobs": queued_jobs,
+        "funded_challenges": funded_challenges,
+        "allocation_policy": {
+            "max_active_assignments": MAX_ACTIVE_ASSIGNMENTS,
+            "max_active_assignments_per_job": MAX_ACTIVE_ASSIGNMENTS_PER_JOB,
+            "max_network_worker_hours_per_day": MAX_NETWORK_WORKER_HOURS_PER_DAY,
+            "compute_location": "worker_device",
+            "platform_compute_payout_obligation": "none_without_verified_reward"
+        }
+    }
+
+@app.get("/audit/account")
+def audit_account(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from workers where account_id=%s",(account_id,))
+            workers=cur.fetchone()[0]
+            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where account_id=%s",(account_id,))
+            seconds=cur.fetchone()[0]
+            cur.execute("select count(*) from reward_events where account_id=%s and settlement_status in ('APPROVED','SETTLED')",(account_id,))
+            rewards=cur.fetchone()[0]
+            cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='VERIFIED'",(account_id,))
+            verified_claims=cur.fetchone()[0]
+            cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='REJECTED'",(account_id,))
+            rejected_claims=cur.fetchone()[0]
+    reliability=round((verified_claims/(verified_claims+rejected_claims))*100,2) if verified_claims+rejected_claims else 0.0
+    return {"workers":workers,"contributed_worker_seconds":seconds,"approved_reward_events":rewards,"verified_claims":verified_claims,"rejected_claims":rejected_claims,"reliability_score":reliability}
+
+
+@app.post("/jobs/{job_id}/verify")
+def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    """Run the registered server-side adapter against submitted candidate hashes."""
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select j.id,j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification "
+                "from jobs j join challenge_registry c on c.id=j.puzzle_id "
+                "where j.id=%s and j.scope='public-reward-challenge' for update",
+                (job_id,),
+            )
+            job = cur.fetchone()
+            if not job:
+                raise HTTPException(404, "Job or challenge registry entry not found")
+            if job[2] not in ("COMPLETED","RUNNING"):
+                raise HTTPException(409, f"Job is {job[2]}")
+            record = {
+                "id": job[1], "type": job[3], "reward_btc": job[4],
+                "balance_btc": job[5], "status": job[6], "rules": job[7],
+                "provenance": job[8], "verification": job[9],
+            }
+            cur.execute(
+                "select c.id,c.worker_id,c.candidate_hash,w.account_id "
+                "from work_claims c join workers w on w.id=c.worker_id "
+                "where c.job_id=%s and c.result_status='TESTED' "
+                "and w.account_id=%s order by c.finished_at asc for update",
+                (job_id, account_id),
+            )
+            claims = cur.fetchall()
+            if not claims:
+                raise HTTPException(404, "No TESTED claim is available for this account")
+            for claim_id, worker_id, candidate_hash, claimant_account in claims:
+                result = verify_candidate_hash(record, candidate_hash)
+                if not result["verified"]:
+                    cur.execute(
+                        "update work_claims set result_status='REJECTED' where id=%s and result_status='TESTED'",
+                        (claim_id,),
+                    )
+                    continue
+                cur.execute(
+                    "update work_claims set result_status='VERIFIED' where id=%s and result_status='TESTED'",
+                    (claim_id,),
+                )
+                if cur.rowcount != 1:
+                    continue
+                cur.execute(
+                    "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",
+                    (job_id,),
+                )
+                if claimant_account != account_id:
+                    raise HTTPException(403, "Verified claim account mismatch")
+                event = build_reward_event(account_id, job[1], job[4])
+                if Decimal(str(event["worker_share_btc"])) + Decimal(str(event["platform_fee_btc"])) != Decimal(str(event["gross_reward_btc"])):
+                    raise HTTPException(500, "Reward split integrity check failed")
+                reward_id = uuid4()
+                cur.execute(
+                    "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id,approved_at) "
+                    "values(%s,%s,%s,%s,%s,%s,'APPROVED',%s,now()) "
+                    "on conflict (puzzle_id,account_id) where settlement_status <> 'VOID' do nothing "
+                    "returning id",
+                    (reward_id, account_id, job[1], event["gross_reward_btc"], event["worker_share_btc"], event["platform_fee_btc"], claim_id),
+                )
+                inserted_reward = cur.fetchone()
+                if inserted_reward:
+                    reward_id = inserted_reward[0]
+                    cur.execute(
+                        "insert into reward_balances(account_id,available_btc,updated_at) values(%s,%s,now()) "
+                        "on conflict(account_id) do update set available_btc=reward_balances.available_btc+excluded.available_btc,updated_at=now()",
+                        (account_id, event["worker_share_btc"]),
+                    )
+                    cur.execute(
+                        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc) "
+                        "values(%s,%s,%s,'WORKER_CREDIT',%s) on conflict(reward_event_id,entry_type) do nothing",
+                        (uuid4(), account_id, reward_id, event["worker_share_btc"]),
+                    )
+                    cur.execute(
+                        "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) "
+                        "values(%s,%s,%s,'PLATFORM_FEE',%s,%s) on conflict(reward_event_id,entry_type) do nothing",
+                        (uuid4(), account_id, reward_id, event["platform_fee_btc"], OWNER_PLATFORM_FEE_BTC_ADDRESS),
+                    )
+                    cur.execute("select btc_payout_address from accounts where id=%s for update", (account_id,))
+                    payout_row = cur.fetchone()
+                    if payout_row and payout_row[0]:
+                        cur.execute(
+                            "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
+                            "where account_id=%s and available_btc >= %s",
+                            (event["worker_share_btc"], account_id, event["worker_share_btc"]),
+                        )
+                        if cur.rowcount != 1:
+                            raise HTTPException(500, "Reward balance reservation failed")
+                        cur.execute(
+                            "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) "
+                            "values(%s,%s,%s,%s,'QUEUED')",
+                            (uuid4(), account_id, event["worker_share_btc"], payout_row[0]),
+                        )
+                        withdrawal_queued = True
+                    else:
+                        withdrawal_queued = False
+                else:
+                    cur.execute(
+                        "select id from reward_events where puzzle_id=%s and account_id=%s and settlement_status <> 'VOID' "
+                        "order by created_at desc limit 1 for update",
+                        (job[1], account_id),
+                    )
+                    existing_reward = cur.fetchone()
+                    reward_id = existing_reward[0] if existing_reward else reward_id
+                    withdrawal_queued = False
+                record_audit_event(
+                    cur,"VERIFIED","job",job_id,account_id,worker_id,
+                    {"candidate_hash":candidate_hash,"reward_status":"APPROVED","auto_credit":"worker_share","withdrawal_queued":withdrawal_queued}
+                )
+                return {"verified":True,"claim_id":str(claim_id),"candidate_hash":candidate_hash,
+                        "reward_status":"APPROVED","reward_id":str(reward_id),
+                        "worker_credit_btc":event["worker_share_btc"],"platform_fee_btc":event["platform_fee_btc"],
+                        "withdrawal_queued":withdrawal_queued}
+    raise HTTPException(422, "All submitted candidates were rejected by the challenge adapter.")
+
+class PayoutAddressUpdate(BaseModel):
+    btc_payout_address: str = Field(min_length=14, max_length=128)
+
+
+class WithdrawalCreate(BaseModel):
+    amount_btc: float = Field(gt=0)
+
+
+@app.put("/account/payout-address")
+def update_payout_address(body: PayoutAddressUpdate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload=body.model_dump()
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            address = body.btc_payout_address.strip()
+            if not valid_btc_mainnet_address(address):
+                raise HTTPException(422, "Invalid Bitcoin mainnet payout address")
+            cur.execute("update accounts set btc_payout_address=%s where id=%s", (address, account_id))
+            if cur.rowcount != 1:
+                raise HTTPException(404, "Account not found")
+            record_audit_event(cur,"PAYOUT_ADDRESS_UPDATED","account",account_id,account_id,payload={"address_present":True})
+            response={"ok":True,"payout_address_set":True,"address_type":"validated_mainnet_btc"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+
+@app.get("/account/rewards")
+def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select available_btc from reward_balances where account_id=%s", (account_id,))
+            balance=cur.fetchone()
+            cur.execute(
+                "select id,amount_btc,payout_address,status,external_reference,created_at,processed_at "
+                "from withdrawal_requests where account_id=%s order by created_at desc limit 50",
+                (account_id,),
+            )
+            withdrawals=cur.fetchall()
+    return {
+        "available_btc": float(balance[0]) if balance else 0.0,
+        "withdrawals":[
+            {"id":str(r[0]),"amount_btc":float(r[1]),"payout_address":r[2],"status":r[3],
+             "external_reference":r[4],"created_at":r[5],"processed_at":r[6]}
+            for r in withdrawals
+        ],
+    }
+
+
+@app.post("/account/withdrawals")
+def create_withdrawal(body: WithdrawalCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload=body.model_dump()
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            cur.execute("select btc_payout_address from accounts where id=%s for update", (account_id,))
+            account=cur.fetchone()
+            if not account or not account[0]:
+                raise HTTPException(409, "Set a BTC payout address before withdrawing")
+            cur.execute("select available_btc from reward_balances where account_id=%s for update", (account_id,))
+            row=cur.fetchone()
+            available=Decimal(str(row[0] if row else 0))
+            amount=Decimal(str(body.amount_btc))
+            if amount > available:
+                raise HTTPException(400, "Withdrawal exceeds available reward balance")
+            cur.execute(
+                "update reward_balances set available_btc=available_btc-%s,updated_at=now() where account_id=%s and available_btc >= %s",
+                (amount,account_id,amount),
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(409, "Reward balance changed; retry")
+            wid=uuid4()
+            cur.execute(
+                "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) values(%s,%s,%s,%s,'QUEUED')",
+                (wid,account_id,amount,account[0]),
+            )
+            record_audit_event(cur,"WITHDRAWAL_QUEUED","withdrawal",wid,account_id,payload={"amount_btc":str(amount),"payout_address_present":True,"custody":"none"})
+            response={"withdrawal_id":str(wid),"status":"QUEUED","amount_btc":float(amount),"custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
 
