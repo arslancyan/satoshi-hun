@@ -10,7 +10,7 @@ values (
   'bc1ptstlyntypqqf8s5qz3jwcsrxw2pxqj634c7pklj2mjlvqwl22l6qqq8csl',
   'ACTIVE'
 )
-on conflict (id) do update set funded_btc=excluded.id;
+on conflict (id) do update set address=excluded.address,network=excluded.network,status=excluded.status;
 
 insert into treasury_accounting(id,funded_btc,reserved_btc,solver_liability_btc,owner_liability_btc)
 values ('00000000-0000-0000-0000-000000000001',0.00100000,0,0,0)
