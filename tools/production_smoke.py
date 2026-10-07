@@ -27,14 +27,23 @@ def check(name, ok, detail=""):
     return ok
 
 ok=True
-s,h,b=request("/health")
-ok &= check("health", s==200 and b.get("ok") is True and b.get("custody")=="non-custodial", f"{s} {b}")
+s=h=b=None
 if EXPECTED_COMMIT:
+    import time
+    for attempt in range(30):
+        s,h,b=request("/health")
+        if s == 200 and b.get("commit") == EXPECTED_COMMIT:
+            break
+        if attempt < 29:
+            time.sleep(10)
     ok &= check(
         "deployed commit",
-        b.get("commit") == EXPECTED_COMMIT,
-        f"expected={EXPECTED_COMMIT} actual={b.get('commit')}",
+        s == 200 and b.get("commit") == EXPECTED_COMMIT,
+        f"expected={EXPECTED_COMMIT} actual={b.get('commit') if isinstance(b, dict) else None}",
     )
+else:
+    s,h,b=request("/health")
+ok &= check("health", s==200 and b.get("ok") is True and b.get("custody")=="non-custodial", f"{s} {b}")
 ok &= check("security headers", s==200 and h.get("X-Content-Type-Options")=="nosniff" and h.get("X-Frame-Options")=="DENY" and bool(h.get("X-Request-ID")), f"{s} headers={h}")
 s,h,b=request("/ready")
 ok &= check("readiness", s==200 and b.get("ready") is True and b.get("database") is True and b.get("redis") is True and b.get("jwt") is True, f"{s} {b}")
