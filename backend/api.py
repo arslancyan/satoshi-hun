@@ -172,6 +172,16 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
                     with db() as conn:
                         with conn.cursor() as cur:
                             cur.execute(
+                                "select status from job_assignments where id=%s for update",
+                                (assignment_id,),
+                            )
+                            assignment_row = cur.fetchone()
+                            if not assignment_row or assignment_row[0] != "RUNNING":
+                                # Never keep hashing after the database says this
+                                # assignment was stopped, switched, or expired.
+                                stop.set()
+                                break
+                            cur.execute(
                                 "update job_assignments set last_heartbeat_at=now() where id=%s and status='RUNNING'",
                                 (assignment_id,),
                             )
@@ -857,6 +867,9 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                               "status":old_status}
                     idempotency_store(cur,account_id,request,payload,response)
                     return response
+                # Switching puzzles must also stop the previous managed solver.
+                # Releasing the DB row alone is not enough to stop its hashing thread.
+                _stop_managed_solver(old_assignment_id)
                 cur.execute(
                     "update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
                     (old_assignment_id,),
