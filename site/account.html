@@ -16,8 +16,8 @@ h1{font-size:34px;margin:35px 0 6px}.grid{display:grid;grid-template-columns:1fr
 <h1>Account</h1>
 <div id="state" class="muted">Loading your account…</div>
 <section id="auth" class="grid">
-<div class="card"><h2>Sign Up</h2><p class="muted">Create a Satoshi Hunt account. Password must be at least 12 characters.</p><input id="suE" type="email" placeholder="Email"><input id="suP" type="password" placeholder="Password"><button class="btn primary" onclick="auth('/auth/register','suE','suP','suM')">CREATE ACCOUNT</button><div id="suM" class="msg"></div></div>
-<div class="card"><h2>Log In</h2><p class="muted">Sign in to manage your payout profile and worker.</p><input id="liE" type="email" placeholder="Email"><input id="liP" type="password" placeholder="Password"><button class="btn primary" onclick="auth('/auth/login','liE','liP','liM')">LOG IN</button><div id="liM" class="msg"></div></div>
+<div class="card"><h2>Sign Up</h2><p class="muted">Create a Satoshi Hunt account. Password must be at least 12 characters.</p><input id="suE" type="email" placeholder="Email"><input id="suP" type="password" placeholder="Password"><button class="btn primary"  type="button" id="signupBtn">CREATE ACCOUNT</button><div id="suM" class="msg"></div></div>
+<div class="card"><h2>Log In</h2><p class="muted">Sign in to manage your payout profile and worker.</p><input id="liE" type="email" placeholder="Email"><input id="liP" type="password" placeholder="Password"><button class="btn primary"  type="button" id="loginBtn">LOG IN</button><div id="liM" class="msg"></div></div>
 </section>
 <section id="profile" class="grid hidden">
 <div class="card full"><span class="eyebrow">ACCOUNT</span><h2 id="who">Your account</h2><p class="muted">Your profile is kept here. You do not need to enter the payout address again unless you want to change it.</p></div>
@@ -29,7 +29,7 @@ h1{font-size:34px;margin:35px 0 6px}.grid{display:grid;grid-template-columns:1fr
 </section>
 </main>
 <script>
-const API="https://satoshi-hunt-api-production.up.railway.app";let TOKEN=localStorage.getItem("satoshi_hunt_session")||"",WORKERS=[],NOTIFICATIONS=[];
+const API="https://satoshi-hunt-api-production.up.railway.app";document.addEventListener("DOMContentLoaded",()=>{const l=document.getElementById("loginBtn"),s=document.getElementById("signupBtn");if(l)l.addEventListener("click",()=>auth("/auth/login","liE","liP","liM"));if(s)s.addEventListener("click",()=>auth("/auth/register","suE","suP","suM"));});let TOKEN=localStorage.getItem("satoshi_hunt_session")||"",WORKERS=[],NOTIFICATIONS=[];
 const $=id=>document.getElementById(id);
 function msg(id,t,ok){const e=$(id);e.textContent=t;e.className="msg "+(ok?"ok":"err")}
 async function loadNotifications(){if(!TOKEN)return;try{const r=await fetch(API+"/account/notifications",{headers:{Authorization:"Bearer "+TOKEN},cache:"no-store"});if(!r.ok)throw Error();const d=await r.json();NOTIFICATIONS=d.notifications||[];const unread=NOTIFICATIONS.filter(x=>!x.read_at);$("notificationBtn").classList.toggle("has-unread",unread.length>0);$("notificationList").innerHTML=NOTIFICATIONS.length?NOTIFICATIONS.map(x=>"<div class='notification-item "+(!x.read_at?"unread":"")+"'><div class='notification-title'>"+x.title+"</div><div class='notification-message'>"+x.message+"</div><div class='muted' style='margin-top:5px'>"+new Date(x.created_at).toLocaleString()+"</div>"+(!x.read_at?"<button class='btn' onclick='markNotificationRead(&quot;"+x.id+"&quot;)'>MARK READ</button>":"")+"</div>").join(""):"<div class='muted'>No notifications yet.</div>"}catch(_){}}
