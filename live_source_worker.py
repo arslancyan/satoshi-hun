@@ -178,8 +178,9 @@ def sync():
                         ),
                     )
 
-            # Keep a small, deliberate set of the strongest public BTC opportunities live.
-            # This makes the marketplace useful even before the first external solve/rotation event.
+            # Queue only challenges that have an explicitly runnable
+            # challenge-specific adapter. Research puzzles remain visible in
+            # the marketplace but must never enter the compute worker queue.
             for cid in PRIORITY_BTC_CHALLENGES:
                 cur.execute(
                     """insert into jobs(id,puzzle_id,scope,status)
@@ -191,6 +192,8 @@ def sync():
                            and verification_stale=false
                            and payout->>'permissionless'='true'
                            and payout->>'automatic_chain_claim'='true'
+                           and verification->>'execution_mode'='COMPUTE'
+                           and verification->>'adapter_runnable'='true'
                        )
                          and not exists (
                            select 1 from jobs
@@ -199,6 +202,19 @@ def sync():
                          )""",
                     (cid,cid,cid),
                 )
+
+            # Clean up any stale research jobs created by older worker versions.
+            cur.execute(
+                """update jobs
+                   set status='EXPIRED',completed_at=now()
+                   where scope='public-reward-challenge'
+                     and status='QUEUED'
+                     and puzzle_id in (
+                       select id from challenge_registry
+                       where coalesce(verification->>'execution_mode','RESEARCH') <> 'COMPUTE'
+                          or coalesce(verification->>'adapter_runnable','false') <> 'true'
+                     )"""
+            )
 
             for retired in solved:
                 cur.execute(
