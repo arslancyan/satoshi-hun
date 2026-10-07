@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Satoshi Hunt — ChatGPT Worker Control</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#020403;color:#ecfff0;font-family:Inter,system-ui,sans-serif}.wrap{max-width:900px;margin:auto;padding:22px}.nav{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #55ff7a2b;padding:14px 0}.brand{font-weight:950;letter-spacing:.15em;color:#55ff7a}.nav a,.btn{color:#55ff7a;text-decoration:none;font-size:11px;font-weight:900}.card{margin-top:18px;padding:20px;border:1px solid #55ff7a2e;border-radius:17px;background:linear-gradient(145deg,#07100a,#030705);box-shadow:0 15px 45px #0007}.eyebrow{color:#55ff7a;font-size:10px;letter-spacing:.18em;font-weight:900}.muted{color:#82998b;font-size:11px;line-height:1.65}.ok{color:#55ff7a}.warn{color:#ffb56a}.cmd{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #55ff7a18;font-size:12px}.tag{padding:4px 7px;border-radius:6px;background:#00ff5e10;color:#55ff7a;font-size:9px;font-weight:900}.btn{display:inline-block;border:1px solid #55ff7a55;background:#00ff5e0b;padding:11px 14px;border-radius:9px;margin-top:12px}.primary{background:#55ff7a;color:#031007}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:700px){.grid{grid-template-columns:1fr}.cmd{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body><main class="wrap">
+<nav class="nav"><div><div class="brand">SATOSHI HUNT</div><div class="muted">CHATGPT · WORKER CONTROL</div></div><a href="./account.html">← ACCOUNT</a></nav>
+<div class="card"><span class="eyebrow">WORKER-ONLY CONNECTION</span><h1>Control your worker from ChatGPT</h1>
+<p class="muted">This connection is intentionally limited to your worker account. It cannot manage the challenge registry, funding, payouts, admin settings, database, or other accounts.</p>
+<p class="ok">✓ The Satoshi Hunt browser page stays open while the worker is active.</p>
+<p class="muted">ChatGPT only changes worker assignment/control state. The actual worker keeps running and heartbeating through Satoshi Hunt. Closing the browser can stop the browser-based worker after the normal heartbeat timeout.</p>
+<a class="btn primary" href="https://chatgpt.com/" target="_blank" rel="noreferrer">OPEN CHATGPT</a>
+</div>
+<div class="grid">
+<div class="card"><span class="eyebrow">READ</span>
+<div class="cmd"><span>satoshi_status</span><span class="tag">READ</span></div>
+<div class="cmd"><span>list_live_puzzles</span><span class="tag">READ</span></div>
+<div class="cmd"><span>get_worker_status</span><span class="tag">READ</span></div>
+<div class="cmd"><span>get_worker_jobs</span><span class="tag">READ</span></div>
+<div class="cmd"><span>get_telemetry</span><span class="tag">READ</span></div>
+<div class="cmd"><span>rank_puzzles</span><span class="tag">READ</span></div>
+<div class="cmd"><span>check_queue_eligibility</span><span class="tag">READ</span></div>
+</div>
+<div class="card"><span class="eyebrow">CONTROL</span>
+<div class="cmd"><span>run_puzzle</span><span class="tag">CONTROL</span></div>
+<div class="cmd"><span>pause_puzzle</span><span class="tag">CONTROL</span></div>
+<div class="cmd"><span>stop_puzzle</span><span class="tag">CONTROL</span></div>
+<div class="cmd"><span>switch_puzzle</span><span class="tag">CONTROL</span></div>
+<div class="cmd"><span>restart_worker</span><span class="tag">CONTROL</span></div>
+<p class="muted" style="margin-top:14px">Every control command is checked server-side against the centralized queue gate and your account's one-active-puzzle rule.</p>
+</div>
+</div>
+<div class="card"><span class="eyebrow">HOW IT WILL WORK</span>
+<ol class="muted">
+<li>Connect the Satoshi Hunt Worker Control MCP app to ChatGPT.</li>
+<li>Sign in to the Satoshi Hunt account through OAuth and approve <b>worker:read</b> and <b>worker:control</b>.</li>
+<li>Ask ChatGPT commands such as “show my live puzzles” or “run the highest-ranked eligible puzzle”.</li>
+<li>ChatGPT calls the worker-scoped MCP tool; Satoshi Hunt validates the action before changing the assignment.</li>
+<li>The Satoshi Hunt browser remains open and continues the worker heartbeat/control loop.</li>
+</ol>
+<p class="warn">Write/control MCP support depends on the ChatGPT plan and workspace. The connection contract is already prepared in this repository; production OAuth/MCP deployment is the next infrastructure step.</p>
+</div>
+</main></body></html>
