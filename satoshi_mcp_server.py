@@ -104,7 +104,10 @@ async def _oauth_api_token() -> str:
         raise RuntimeError("MCP_INTERNAL_SECRET is not configured")
     claims = access.claims or {}
     payload = {"subject": access.subject or "", "email": claims.get("email") or claims.get("preferred_username")}
-    headers = {"X-MCP-Internal-Secret": INTERNAL_SECRET}
+    headers = {
+        "X-MCP-Internal-Secret": INTERNAL_SECRET,
+        "X-MCP-OAuth-Issuer": OAUTH_ISSUER,
+    }
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(API_URL + "/internal/mcp/session", headers=headers, json=payload)
         r.raise_for_status()
