@@ -67,6 +67,11 @@ jobs:
           SATOSHI_HUNT_API: http://127.0.0.1:8000
         run: python tools/staging_e2e.py
 
+      - name: Redis rate-limit abuse gate
+        env:
+          SATOSHI_HUNT_API: http://127.0.0.1:8000
+        run: python tools/rate_limit_abuse_test.py
+
       - name: Concurrent assignment race gate
         env:
           SATOSHI_HUNT_API: http://127.0.0.1:8000
