@@ -738,6 +738,7 @@ def marketplace():
                             and coalesce((verification->>'execution_mode'),'RESEARCH')='COMPUTE'
                             and coalesce((verification->>'adapter_audited'),'false')='true'
                             and coalesce((verification->>'adapter_runnable'),'false')='true'
+                            and coalesce((verification->>'adapter_status'),'')='RUNNABLE'
                           ) as queue_eligible
                    from challenge_registry
                    where status is not null
@@ -752,6 +753,7 @@ def marketplace():
                         and coalesce((verification->>'execution_mode'),'RESEARCH')='COMPUTE'
                         and coalesce((verification->>'adapter_audited'),'false')='true'
                         and coalesce((verification->>'adapter_runnable'),'false')='true'
+                            and coalesce((verification->>'adapter_status'),'')='RUNNABLE'
                        then 0
                        when status='OPEN + FUNDED' then 1
                        else 2
@@ -819,6 +821,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                          coalesce((verification->>'execution_mode'),'RESEARCH')='COMPUTE'
                          and coalesce((verification->>'adapter_audited'),'false')='true'
                          and coalesce((verification->>'adapter_runnable'),'false')='true'
+                            and coalesce((verification->>'adapter_status'),'')='RUNNABLE'
                        )
                        or (
                          %s = true
