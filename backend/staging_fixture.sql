@@ -30,7 +30,7 @@ insert into challenge_registry (
   'OPEN + FUNDED',
   'public-reward-challenge',
   '{"url":"https://staging.satoshi-hunt.invalid/challenge/001","source_id":"staging-001","checked_at":"2026-01-01T00:00:00Z"}'::jsonb,
-  '{"method":"exact_candidate_hash","source_id":"staging-001","checked_at":"2026-01-01T00:00:00Z","fingerprint":"staging-known-solution-v1","expected_candidate_hash":"b54609333c7f5082f8e8eb408e40a59d73e9fbe9f546c2adf75347cd941bd22d","funding_match":true,"verification_stale":false,"adapter_id":"staging-hash-commitment-v1","adapter_status":"RUNNABLE","adapter_audited":true,"adapter_runnable":true,"execution_mode":"COMPUTE","solver_entrypoint":"challenge_adapters.staging_hash_commitment:verify","expires_at":"2099-01-01T00:00:00Z","replay_protection":"claim-idempotency"}'::jsonb,
+  '{"method":"exact_candidate_hash","source_id":"staging-001","checked_at":"2026-01-01T00:00:00Z","fingerprint":"staging-known-solution-v1","expected_candidate_hash":"b54609333c7f5082f8e8eb408e40a59d73e9fbe9f546c2adf75347cd941bd22d","funding_match":true,"verification_stale":false,"adapter_id":"staging-hash-commitment-v1","adapter_status":"AUDITED","adapter_audited":true,"adapter_runnable":false,"execution_mode":"VERIFY","solver_entrypoint":null,"expires_at":"2099-01-01T00:00:00Z","replay_protection":"claim-idempotency"}'::jsonb,
   '{"permissionless":true,"automatic_chain_claim":true}'::jsonb,
   'staging-hash-commitment',
   now(),
