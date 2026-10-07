@@ -12,7 +12,13 @@ a puzzle whose search domain is undefined or requires human information.
 """
 
 from dataclasses import dataclass
-\n# Compatibility: this legacy registry file coexists with the challenge_adapters/\n# adapter module directory. Expose the directory as a package search path so\n# verifier imports remain valid without renaming the public registry module.\nfrom pathlib import Path as _Path\n__path__ = [str(_Path(__file__).with_name("challenge_adapters"))]\nfrom typing import Callable, Any
+
+# Compatibility: this legacy registry file coexists with the challenge_adapters/
+# adapter module directory. Expose the directory as a package search path so
+# verifier imports remain valid without renaming the public registry module.
+from pathlib import Path as _Path
+__path__ = [str(_Path(__file__).with_name("challenge_adapters"))]
+from typing import Callable, Any
 
 
 @dataclass(frozen=True)
