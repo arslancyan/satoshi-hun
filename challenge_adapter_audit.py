@@ -1,8 +1,8 @@
 """Deterministic audit for challenge adapter promotion.
 
 This audit never promotes a challenge by itself. It classifies catalog entries
-as DISCOVERED, VERIFIED, or RUNNABLE from the checked-in adapter contract and
-fails when a RUNNABLE adapter is incomplete or its known test vector is wrong.
+as DISCOVERED, VERIFIED, AUDITED, or RUNNABLE from the checked-in adapter contract and
+fails when an AUDITED/RUNNABLE adapter is incomplete or its known test vector is wrong.
 """
 
 from __future__ import annotations
@@ -50,13 +50,13 @@ def audit_adapter(spec: AdapterSpec) -> list[str]:
     errors: list[str] = []
     if spec.status in {"AUDITED", "RUNNABLE"}:
         if spec.execution_mode != "COMPUTE":
-            errors.append("RUNNABLE adapter must use COMPUTE execution_mode")
+            errors.append("AUDITED/RUNNABLE adapter must use COMPUTE execution_mode")
         if not spec.search_space:
-            errors.append("RUNNABLE adapter must declare a bounded search_space")
+            errors.append("AUDITED/RUNNABLE adapter must declare a bounded search_space")
         if not spec.solver_entrypoint:
-            errors.append("RUNNABLE adapter must declare solver_entrypoint")
+            errors.append("AUDITED/RUNNABLE adapter must declare solver_entrypoint")
         if not spec.test_vectors:
-            errors.append("RUNNABLE adapter must declare test_vectors")
+            errors.append("AUDITED/RUNNABLE adapter must declare test_vectors")
 
         if spec.solver_entrypoint:
             try:
@@ -68,7 +68,7 @@ def audit_adapter(spec: AdapterSpec) -> list[str]:
                     algorithm = str(vector.get("algorithm", "")).lower()
                     message = str(vector.get("message", ""))
                     if not algorithm or not message:
-                        errors.append("runnable test vector needs algorithm and message")
+                        errors.append("audited/runnable test vector needs algorithm and message")
                         continue
                     expected = EXPECTED_DIGESTS.get((algorithm, message))
                     if expected is None:
