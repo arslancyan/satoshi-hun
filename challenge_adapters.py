@@ -51,6 +51,15 @@ class AdapterSpec:
 # Only adapters with a deterministic, independently testable compute path may
 # enter RUNNABLE. Research puzzles can be VERIFIED without becoming runnable.
 ADAPTERS: dict[str, AdapterSpec] = {
+    "satoshi-hunt-native-btc-v1": AdapterSpec(
+        "satoshi-hunt-native-btc-v1", "native-bounded-btc-v1", "COMPUTE",
+        "sha256-leading-zero-proof", "RUNNABLE", "0..1048575 nonce range",
+        "0..1048575", "challenge_adapters.native_bounded_btc_v1:solve",
+        (
+            {"challenge_id": "satoshi-hunt-native-btc-v1", "difficulty_bits": 20, "max_nonce": 1048575},
+        ),
+        "Satoshi Hunt-authored bounded nonce proof. It is not a private-key or seed search. Production promotion still requires a dedicated funded BTC escrow.",
+    ),
     "base-leading-zero-canary": AdapterSpec(
         "base-leading-zero-canary", "bounded-leading-zero-v1", "COMPUTE",
         "leading-zero-proof", "RUNNABLE", "finite nonce range",
