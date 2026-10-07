@@ -1363,7 +1363,6 @@ def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
                                join job_assignments a on a.job_id=j.id
                                join workers w on w.id=a.worker_id
                                where j.scope='public-reward-challenge' and w.account_id=%s
-                                 and a.status in ('ASSIGNED','RUNNING')
                                order by j.created_at desc limit 50""",(account_id,))
             rows = cur.fetchall()
     return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4],"assignment":None if r[5] is None else {"id":str(r[5]),"worker_id":str(r[6]),"status":r[7],"assigned_at":r[8],"started_at":r[9],"completed_at":r[10],"last_heartbeat_at":r[11],"contribution_seconds":r[12]}} for r in rows]
