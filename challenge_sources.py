@@ -386,6 +386,7 @@ class OpenCryptoPuzzlesAdapter:
                         "execution_mode": adapter_contract["execution_mode"] if adapter_contract.get("adapter_registered") else "RESEARCH",
                         "adapter_id": adapter_contract.get("adapter_id"),
                         "adapter_status": adapter_contract.get("adapter_status"),
+                        "adapter_audited": bool(adapter_contract.get("adapter_audited")),
                         "adapter_runnable": readiness["execution_allowed"],
                         "adapter_readiness": readiness["readiness"],
                         "adapter_execution_allowed": readiness["execution_allowed"],
@@ -424,6 +425,7 @@ class OpenCryptoPuzzlesAdapter:
                 verification["execution_mode"] = adapter_contract["execution_mode"] if adapter_contract.get("adapter_registered") else "RESEARCH"
                 verification["adapter_id"] = adapter_contract.get("adapter_id")
                 verification["adapter_status"] = adapter_contract.get("adapter_status")
+                verification["adapter_audited"] = bool(adapter_contract.get("adapter_audited"))
                 verification["adapter_runnable"] = readiness["execution_allowed"]
                 verification["adapter_readiness"] = readiness["readiness"]
                 verification["adapter_execution_allowed"] = readiness["execution_allowed"]
