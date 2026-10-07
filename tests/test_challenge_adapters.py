@@ -6,6 +6,8 @@ def test_research_adapters_are_registered_but_not_runnable():
         "corey-phillips-kitten-passphrase-1msats",
         "keir-finlow-bates-blockchain-book-600ksats",
         "rushwallet-contest-30-1msats",
+        "aoi-nakamoto-quizchain-0-854btc",
+        "genesis-block-wallet-puzzle-142ksats",
     ):
         spec = get_adapter(challenge_id)
         assert spec is not None
