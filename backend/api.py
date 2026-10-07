@@ -275,6 +275,28 @@ class MCPIdentityRequest(BaseModel):
     email: EmailStr | None = None
 
 
+@app.get("/mcp/connection-status")
+def mcp_connection_status():
+    """Public, non-secret MCP deployment status for connection diagnostics."""
+    enabled = os.environ.get("MCP_ENABLED", "false").strip().lower() == "true"
+    configured = all(
+        os.environ.get(key, "").strip()
+        for key in (
+            "MCP_OAUTH_ISSUER",
+            "MCP_RESOURCE_URL",
+            "MCP_OAUTH_INTROSPECTION_URL",
+        )
+    )
+    return {
+        "mcp_enabled": enabled,
+        "oauth_configured": configured,
+        "resource_url": os.environ.get("MCP_RESOURCE_URL", "").strip() or None,
+        "required_scopes": ["worker:read", "worker:control"],
+        "identity_linking": "explicit_issuer_subject_mapping",
+        "write_actions_require_confirmation": True,
+    }
+
+
 @app.post("/internal/mcp/session")
 def issue_mcp_worker_session(body: MCPIdentityRequest, request: Request):
     """Exchange a verified MCP identity for a short-lived Satoshi Hunt worker session.
