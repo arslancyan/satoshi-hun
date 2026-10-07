@@ -59,6 +59,20 @@ create table if not exists challenge_registry (
 
 create index if not exists idx_challenge_registry_status on challenge_registry(status);
 
+-- Live-source verification fields retained for compatibility with existing
+-- challenge synchronizers and marketplace ranking.
+alter table challenge_registry add column if not exists payout jsonb not null default '{}'::jsonb;
+alter table challenge_registry add column if not exists source_adapter text;
+alter table challenge_registry add column if not exists live_checked_at timestamptz;
+alter table challenge_registry add column if not exists live_verification jsonb not null default '{}'::jsonb;
+alter table challenge_registry add column if not exists advertised_reward_btc numeric(20,8);
+alter table challenge_registry add column if not exists verified_balance_btc numeric(20,8);
+alter table challenge_registry add column if not exists funding_match boolean not null default false;
+alter table challenge_registry add column if not exists verification_stale boolean not null default true;
+alter table challenge_registry add column if not exists last_live_check_error text;
+alter table challenge_registry add column if not exists funding_snapshot jsonb not null default '{}'::jsonb;
+alter table challenge_registry add column if not exists solve_evidence jsonb not null default '{}'::jsonb;
+
 alter table challenge_registry add column if not exists search_metrics jsonb not null default '{}'::jsonb;
 alter table challenge_registry add column if not exists expected_value_score numeric(30,12) not null default 0;
 create index if not exists idx_challenge_registry_expected_value
