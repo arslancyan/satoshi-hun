@@ -27,3 +27,17 @@ challenge must not become executable merely because metrics exist.
 Public references currently describe #71 as an address-only puzzle with a
 2^70-candidate range. Satoshi Hunt should display that as an EXTREME research
 target and keep execution gated behind an independently audited adapter.
+
+## Adaptive rotation
+
+The live source worker uses the same measured telemetry for rotation. Up to
+30 verified records can be ranked for marketplace display, while only records
+with strategy action RUN, OPEN + FUNDED status, a runnable challenge-specific
+adapter, COMPUTE execution mode, and positive verified balance are eligible for
+queue creation. Research and PAUSE records remain visible but are never
+silently promoted into compute work.
+
+When an externally solved challenge is retired, replacement selection prefers
+the highest persisted expected-value score before falling back to verified
+balance and freshness. This keeps rotation responsive to changing public
+conditions instead of a hard-coded challenge list.
