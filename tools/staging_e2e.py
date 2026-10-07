@@ -25,8 +25,14 @@ session=ok("login",*call("/auth/login","POST",{"email":email,"password":password
 ok("account",*call("/me",auth=session))
 ok("wallet",*call("/account/payout-address","PUT",{"btc_payout_address":"1BoatSLRHtKNngkdXEeobR76b53LETtpyT"},session))
 worker=ok("worker",*call("/workers","POST",{"label":"staging-e2e"},session))
-market=ok("marketplace",*call("/marketplace/challenges"))["challenges"]
-challenge=next(x for x in market if x["challenge_id"]=="satoshi-hunt-staging-001")
+market_response=ok("marketplace",*call("/marketplace/challenges"))
+market=market_response.get("challenges") or []
+catalog=market_response.get("catalog") or market_response.get("offers") or []
+challenge=next((x for x in market if x["challenge_id"]=="satoshi-hunt-staging-001"), None)
+if challenge is None:
+    challenge=next(x for x in catalog if x["challenge_id"]=="satoshi-hunt-staging-001")
+if challenge.get("verification",{}).get("execution_mode") != "VERIFY":
+    raise SystemExit("staging fixture must remain VERIFY-only")
 run=ok("run",*call("/marketplace/challenges/satoshi-hunt-staging-001/run","POST",{"worker_id":worker["id"]},session))
 wid=worker["id"]; wt=worker["worker_token"]; aid=run["assignment_id"]; job=run["job_id"]
 ok("start",*call("/assignments/"+aid+"/start","POST",worker=wt))
