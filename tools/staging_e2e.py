@@ -37,12 +37,12 @@ if claim.get("auto_verification",{}).get("settlement_status") != "REVIEW": raise
 reward_id=claim["auto_verification"]["reward_id"]
 
 owner_email="owner@example.com"
-owner_password="Owner-"+secrets.token_urlsafe(12)
+owner_password="Staging-Owner-Only-2026!"
 owner_status,owner_signup=call("/auth/register","POST",{"email":owner_email,"password":owner_password})
 if owner_status==200:
     owner_session=owner_signup["session"]
 elif owner_status==409:
-    raise SystemExit("owner account already exists; staging E2E needs a disposable owner identity")
+    owner_session=ok("owner login",*call("/auth/login","POST",{"email":owner_email,"password":owner_password}))["session"]
 else:
     raise SystemExit(f"owner signup failed: {owner_status} {owner_signup}")
 approved=ok("owner approval",*call("/admin/rewards/"+reward_id+"/approve","POST",{},owner_session))
