@@ -59,6 +59,21 @@ def api_call(path, method="POST", payload=None):
 
 
 
+def challenge_execution_allowed(challenge):
+    """Return True only for verified, funded challenges with an audited runnable adapter."""
+    if not isinstance(challenge, dict):
+        return False
+    verification = challenge.get("verification") or {}
+    return (
+        challenge.get("rules") == "public-reward-challenge"
+        and challenge.get("status") == "OPEN + FUNDED"
+        and verification.get("execution_mode") == "COMPUTE"
+        and verification.get("adapter_audited") is True
+        and verification.get("adapter_runnable") is True
+        and bool(verification.get("adapter_id"))
+    )
+
+
 def hash_digest(algorithm, message):
     algorithm = algorithm.lower()
     if algorithm == "sha256":
@@ -137,14 +152,7 @@ async def run_assignment(assignment):
         verification = challenge.get("verification") or {}
         # Defense in depth: the API queue gate is authoritative, but the worker
         # must independently refuse research-only or unaudited assignments.
-        if (
-            challenge.get("rules") != "public-reward-challenge"
-            or challenge.get("status") != "OPEN + FUNDED"
-            or verification.get("execution_mode") != "COMPUTE"
-            or verification.get("adapter_audited") is not True
-            or verification.get("adapter_runnable") is not True
-            or not verification.get("adapter_id")
-        ):
+        if not challenge_execution_allowed(challenge):
             raise RuntimeError("Challenge is not backed by an audited runnable compute adapter")
         if challenge.get("challenge_type") != "hash-collision":
             raise RuntimeError(f"No real solver is registered for challenge type {challenge.get('challenge_type')!r}")
@@ -282,16 +290,7 @@ async def handler(ws):
             and isinstance(verification, dict)
             and all(str(verification.get(k, "")).strip() for k in ("method", "source_id", "checked_at", "fingerprint"))
         )
-        verification = verification if isinstance(verification, dict) else {}
-        if (
-            p.get("status") != "OPEN + FUNDED"
-            or p.get("rules") != "public-reward-challenge"
-            or not metadata_ok
-            or verification.get("execution_mode") != "COMPUTE"
-            or verification.get("adapter_audited") is not True
-            or verification.get("adapter_runnable") is not True
-            or not verification.get("adapter_id")
-        ):
+        if not metadata_ok or not challenge_execution_allowed(p):
             await ws.send(json.dumps({
                 "type": "result",
                 "message": f"#{pid} rejected: challenge is not fully verified for local work."
