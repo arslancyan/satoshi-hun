@@ -57,7 +57,7 @@ jobs:
         run: python -m pip install pytest
 
       - name: Materialize runtime API for contract tests
-        run: SATOSHI_HUNT_API_PATH="$GITHUB_WORKSPACE/backend/api.py" python tools/runtime_patch.py
+        run: DATABASE_URL="" SATOSHI_HUNT_API_PATH="$GITHUB_WORKSPACE/backend/api.py" python tools/runtime_patch.py
 
       - name: Run integrity and PostgreSQL integration tests
         run: python -m pytest -q
