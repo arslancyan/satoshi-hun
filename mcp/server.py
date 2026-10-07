@@ -115,7 +115,7 @@ async def check_queue_eligibility(challenge_id: str, ctx: Context) -> dict:
 @mcp.tool()
 async def run_puzzle(challenge_id: str, worker_id: str, ctx: Context) -> dict:
     """Run an eligible puzzle for the connected worker; server enforces the final gate."""
-    data = await list_live_puzzles()
+    data = await list_live_puzzles(ctx)
     row = next((x for x in data.get("challenges", []) if x.get("challenge_id") == challenge_id), None)
     if not row:
         return {"ok": False, "blocked": True, "challenge_id": challenge_id, "reasons": ["challenge_not_live"]}
