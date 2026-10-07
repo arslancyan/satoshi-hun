@@ -73,7 +73,7 @@ jobs:
         run: python tools/staging_concurrency.py
       - name: Start mock payout executor
         env:
-          MOCK_PAYOUT_TX_PREFIX: staging-mock-${{ github.run_id }}-
+          MOCK_PAYOUT_TX_PREFIX: aaaaaaaaaaaaaaaa
         run: |
           python tools/mock_payout_executor.py >/tmp/mock-payout.log 2>&1 &
           sleep 1
@@ -90,7 +90,7 @@ jobs:
           SATOSHI_HUNT_API: http://127.0.0.1:8000
           STAGING_OWNER_EMAIL: owner@example.com
           STAGING_OWNER_PASSWORD: Staging-Owner-Only-2026!
-          MOCK_PAYOUT_TX_PREFIX: staging-mock-${{ github.run_id }}-
+          MOCK_PAYOUT_TX_PREFIX: aaaaaaaaaaaaaaaa
         run: python tools/staging_payout_verify.py
 
       - name: Upload API log on failure
