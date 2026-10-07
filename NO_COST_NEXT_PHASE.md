@@ -75,3 +75,12 @@ Use the existing staging deployment path:
 ## Safety rule
 
 Until independent staging and challenge verification are complete, Satoshi Hunt remains a development/staging system. Demo balances and challenge records must never be presented as guaranteed live rewards.
+
+
+## Repository closure additions
+
+- Live-source sync now uses the same challenge-discovery readiness decision as marketplace/execution.
+- Research/verified challenges are prevented from entering the worker queue during normal sync and replacement rotation.
+- Adapter readiness is persisted in challenge verification metadata for auditability.
+- The current Peter Todd bounty family remains VERIFIED/RESEARCH until a bounded, independently audited collision solver exists.
+- The bounded-leading-zero adapter remains a test/reference capability and does not create a live funded opportunity by itself.
