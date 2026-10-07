@@ -805,7 +805,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                          and coalesce((verification->>'adapter_audited'),'false')='true'
                        )
                      )
-                   for update""",(challenge_id,))
+                   for update""",(challenge_id, os.environ.get("SATOSHI_HUNT_ENV","").strip().lower() == "staging"))
             challenge=cur.fetchone()
             if not challenge: raise HTTPException(409,"Challenge is not live, funded, or runnable")
             payout=challenge[3] or {}
