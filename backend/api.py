@@ -85,7 +85,7 @@ if worker_mcp is not None and os.environ.get("MCP_ENABLED", "false").strip().low
 if ALLOWED_FRONTEND_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=ALLOWED_FRONTEND_ORIGINS,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "OPTIONS"],
         allow_headers=["*"],
@@ -93,14 +93,24 @@ if ALLOWED_FRONTEND_ORIGINS:
 
 @app.middleware("http")
 async def enforce_public_cors_headers(request: Request, call_next):
-    response = await call_next(request)
+    request_id = request.headers.get("X-Request-ID") or secrets.token_hex(12)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logging.exception("Unhandled request failure request_id=%s path=%s", request_id, request.url.path)
+        raise
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     origin = request.headers.get("origin")
     if origin in ALLOWED_FRONTEND_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Vary"] = "Origin"
         if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Idempotency-Key"
+            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Idempotency-Key, X-Request-ID"
     return response
 
 
@@ -1051,11 +1061,15 @@ def health():
 def ready():
     if not DATABASE_URL:
         raise HTTPException(503, "DATABASE_URL is not configured")
+    if not JWT_SECRET:
+        raise HTTPException(503, "JWT_SECRET is not configured")
     try:
+        started = time.monotonic()
         with db() as conn:
             with conn.cursor() as cur:
                 cur.execute("select 1")
                 cur.fetchone()
+        database_latency_ms = round((time.monotonic() - started) * 1000, 2)
     except Exception as exc:
         logging.error("Database readiness check failed: %s", type(exc).__name__)
         raise HTTPException(503, "Database unavailable")
@@ -1065,7 +1079,11 @@ def ready():
             _redis.ping()
         except Exception:
             redis_ok = False
-    return {"ready": True, "database": True, "redis": redis_ok, "rate_limit_mode": "redis" if _redis and redis_ok else "fallback"}
+        if not redis_ok:
+            raise HTTPException(503, "Redis unavailable")
+    return {"ready": True, "database": True, "redis": redis_ok, "jwt": True,
+            "database_latency_ms": database_latency_ms,
+            "rate_limit_mode": "redis" if _redis else "fallback"}
 
 
 
