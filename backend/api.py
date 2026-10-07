@@ -23,6 +23,7 @@ from anti_cheat import security_flags, reputation_score
 from payouts import validate_external_txid
 from owner_config import OWNER_PLATFORM_FEE_BTC_ADDRESS
 from challenge_adapters import runtime_contract
+from beta_policy import BetaPolicy, beta_worker_eligible
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -40,6 +41,10 @@ MAX_SINGLE_PAYOUT_BTC = Decimal(os.environ.get("MAX_SINGLE_PAYOUT_BTC", "0.001")
 MAX_DAILY_PAYOUT_BTC = Decimal(os.environ.get("MAX_DAILY_PAYOUT_BTC", "0.005"))
 PAYOUT_RETRY_AFTER_MINUTES = max(5, int(os.environ.get("PAYOUT_RETRY_AFTER_MINUTES", "15")))
 MCP_INTERNAL_SECRET = os.environ.get("MCP_INTERNAL_SECRET", "").strip()
+BETA_POLICY = BetaPolicy(
+    enabled=os.environ.get("SATOSHI_HUNT_BETA_ENABLED", "false").strip().lower() == "true",
+    max_active_workers=max(1, int(os.environ.get("SATOSHI_HUNT_BETA_MAX_ACTIVE_WORKERS", "10"))),
+)
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 try:
@@ -818,8 +823,21 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             staging_verify = os.environ.get("SATOSHI_HUNT_ENV","").strip().lower() == "staging" and execution_mode == "VERIFY"
             if not (execution_mode == "COMPUTE" and adapter_audited and adapter_runnable) and not (staging_verify and adapter_audited):
                 raise HTTPException(409,"Challenge does not have an independently audited runnable adapter")
-            cur.execute("select id from workers where id=%s and account_id=%s and status='ACTIVE'",(body.worker_id,account_id))
-            if not cur.fetchone(): raise HTTPException(400,"Selected worker is not active or does not belong to this account")
+            cur.execute("select id,status from workers where id=%s and account_id=%s and status='ACTIVE'",(body.worker_id,account_id))
+            worker_row=cur.fetchone()
+            if not worker_row: raise HTTPException(400,"Selected worker is not active or does not belong to this account")
+            if BETA_POLICY.enabled:
+                cur.execute("select count(distinct worker_id) from job_assignments where status in ('ASSIGNED','RUNNING')")
+                active_beta_workers=cur.fetchone()[0]
+                beta_ok,beta_reasons=beta_worker_eligible(
+                    policy=BETA_POLICY,
+                    worker_status=worker_row[1],
+                    account_status="ACTIVE",
+                    challenge_runnable=(execution_mode == "COMPUTE" and adapter_audited and adapter_runnable),
+                    active_worker_count=active_beta_workers,
+                )
+                if not beta_ok:
+                    raise HTTPException(403, "Closed beta admission denied: " + ",".join(beta_reasons))
             cur.execute(
                 "insert into challenge_selections(account_id,challenge_id) values(%s,%s) "
                 "on conflict(account_id,challenge_id) do update set selected_at=now()",
