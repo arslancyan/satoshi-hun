@@ -185,7 +185,7 @@ def sync():
                 metrics["opportunity_score"] = ranked.get("opportunity_score", 0)
                 cur.execute(
                     "update challenge_registry set search_metrics=%s::jsonb, expected_value_score=%s, updated_at=now() where id=%s",
-                    (json.dumps(metrics), float(ranked.get("strategy", {}).get("score") or 0), ranked["id"]),
+                    (json.dumps(metrics), float(ranked.get("expected_value_score") or 0), ranked["id"]),
                 )
             for ranked in rotation["queue"]:
                 cid = ranked["id"]
