@@ -12,6 +12,7 @@ def base_record():
             "execution_mode": "COMPUTE",
             "adapter_audited": True,
             "adapter_runnable": True,
+            "adapter_status": "RUNNABLE",
         },
         "payout": {
             "permissionless": True,
@@ -32,6 +33,14 @@ def test_unfunded_record_is_blocked():
     result = queue_gate(record)
     assert result["eligible"] is False
     assert "no_positive_balance" in result["reasons"]
+
+
+def test_non_runnable_adapter_status_is_blocked():
+    record = base_record()
+    record["verification"]["adapter_status"] = "AUDITED"
+    result = queue_gate(record)
+    assert result["eligible"] is False
+    assert "adapter_status_not_runnable" in result["reasons"]
 
 
 def test_verify_only_adapter_is_blocked():
