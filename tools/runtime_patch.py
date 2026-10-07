@@ -124,6 +124,20 @@ def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = De
 p.write_text(s)
 
 
+# Account notifications and owner live-worker monitor.
+if _db:
+    with psycopg.connect(_db) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""create table if not exists account_notifications (
+                id uuid primary key,
+                account_id uuid not null references accounts(id) on delete cascade,
+                title text not null,
+                message text not null,
+                read_at timestamptz,
+                created_at timestamptz not null default now()
+            )""")
+            cur.execute("create index if not exists idx_account_notifications_account_created on account_notifications(account_id,created_at desc)")
+
 # Live challenge registry compatibility migrations. Older Railway databases may
 # predate the search/ranking columns now required by the marketplace.
 if _db:
