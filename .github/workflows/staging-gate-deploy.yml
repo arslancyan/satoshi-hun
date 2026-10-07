@@ -75,7 +75,6 @@ jobs:
               fi
               echo "Production is healthy but still serving $ACTUAL_COMMIT; waiting for $EXPECTED_COMMIT."
             fi
-            fi
             sleep 10
           done
           echo "::error::Production API did not become reachable after staging passed."
