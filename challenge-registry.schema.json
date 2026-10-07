@@ -28,5 +28,20 @@
     "requires_positive_balance": true,
     "requires_provenance": true,
     "requires_verification": true
+  },
+  "runtime_metrics": {
+    "keyspace_total": "integer string; runtime candidate/search space",
+    "keyspace_searched": "integer string; unique candidates covered by checkpoints",
+    "keyspace_remaining": "integer string; keyspace_total - keyspace_searched",
+    "coverage_pct": "percentage of unique keyspace covered",
+    "active_workers": "currently RUNNING workers contributing measured throughput",
+    "attempts_per_second": "measured RUNNING throughput",
+    "exhaustion_hours": "projected exhaustive-search time at current measured throughput",
+    "probability_observed": "observed collision probability from completed unique work",
+    "probability_24h": "forward 24h collision probability using measured RUNNING throughput",
+    "expected_collision_candidates": "birthday-bound expected samples to first collision",
+    "difficulty_category": "QUICK | HARD | EXTREME | UNRATED",
+    "probability_model": "birthday_collision_bound for hash-collision challenges",
+    "measured_at": "UTC ISO-8601"
   }
 }
