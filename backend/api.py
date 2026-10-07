@@ -1054,7 +1054,13 @@ def reputation(account_id: UUID = Depends(account_id_from_auth)):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "satoshi-hunt-api", "version": "0.1.1", "custody": "non-custodial"}
+    return {
+        "ok": True,
+        "service": "satoshi-hunt-api",
+        "version": "0.1.1",
+        "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "unknown"),
+        "custody": "non-custodial",
+    }
 
 
 @app.get("/ready")
