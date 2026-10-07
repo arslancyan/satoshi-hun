@@ -630,7 +630,7 @@ def approve_creator(challenge_id: str, request: Request, account_id: UUID = Depe
             if replay is not None:
                 return replay
             require_owner(cur, account_id)
-            cur.execute("update challenge_creators set creator_status='APPROVED',approved_at=now() where challenge_id=%s and creator_status='PENDING' returning creator_account_id",(challenge_id,))
+            cur.execute("update challenge_creators set creator_status='APPROVED',approved_at=now() where challenge_id=%s and creator_status='PENDING' returning creator_account_id",(challenge_id, os.environ.get("SATOSHI_HUNT_ENV","").strip().lower() == "staging"))
             row=cur.fetchone()
             if not row: raise HTTPException(409,"Creator is not pending")
             record_audit_event(cur,"CREATOR_APPROVED","challenge",challenge_id,account_id,payload={"creator_account_id":str(row[0]) if row[0] else None})
@@ -800,7 +800,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                          and coalesce((verification->>'adapter_runnable'),'false')='true'
                        )
                        or (
-                         current_setting('app.satoshi_hunt_env', true)='staging'
+                         %s = true
                          and coalesce((verification->>'execution_mode'),'RESEARCH')='VERIFY'
                          and coalesce((verification->>'adapter_audited'),'false')='true'
                        )
