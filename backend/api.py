@@ -42,14 +42,14 @@ PAYOUT_RETRY_AFTER_MINUTES = max(5, int(os.environ.get("PAYOUT_RETRY_AFTER_MINUT
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 try:
-    from mcp.server import mcp as worker_mcp
+    from satoshi_mcp_server import mcp as worker_mcp
 except ImportError:  # pragma: no cover - optional until MCP dependency is installed
     worker_mcp = None
 
 
 @asynccontextmanager
 async def app_lifespan(_app):
-    if worker_mcp is None:
+    if worker_mcp is None or os.environ.get("MCP_ENABLED", "false").strip().lower() != "true":
         yield
         return
     async with worker_mcp.session_manager.run():
