@@ -116,9 +116,12 @@ async def check_queue_eligibility(challenge_id: str) -> dict:
 @mcp.tool()
 async def run_puzzle(challenge_id: str, worker_id: str) -> dict:
     """Run an eligible puzzle for the connected worker; server enforces the final gate."""
-    gate = await check_queue_eligibility(challenge_id)
-    if not gate["eligible"]:
-        return {"ok": False, "blocked": True, "challenge_id": challenge_id, "reasons": gate["reasons"]}
+    data = await list_live_puzzles()
+    row = next((x for x in data.get("challenges", []) if x.get("challenge_id") == challenge_id), None)
+    if not row:
+        return {"ok": False, "blocked": True, "challenge_id": challenge_id, "reasons": ["challenge_not_live"]}
+    if row.get("queue_eligible") is not True:
+        return {"ok": False, "blocked": True, "challenge_id": challenge_id, "reasons": ["central_queue_gate_rejected"]}
     return await _post(f"/marketplace/challenges/{challenge_id}/run", {"worker_id": worker_id}, _token())
 
 @mcp.tool()
