@@ -4,19 +4,10 @@ from datetime import datetime, timezone
 import psycopg
 from challenge_sources import OpenCryptoPuzzlesAdapter
 from strategy_router import choose_strategy
+from adaptive_rotation import rank_challenges
 
 DATABASE_URL = os.environ.get("DATABASE_URL","")
 SOURCE_ID = "open-crypto-puzzles-v2"
-# Highest-priority BTC research challenges selected from the live catalog.
-# These are public, funded puzzles with strong published leads, but they are
-# not treated as generic hash-search jobs unless a challenge-specific solver
-# adapter exists.
-PRIORITY_BTC_CHALLENGES = (
-    "keir-finlow-bates-blockchain-book-600ksats",
-    "corey-phillips-kitten-passphrase-1msats",
-    "rushwallet-contest-30-1msats",
-)
-
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -194,10 +185,12 @@ def sync():
                         ),
                     )
 
-            # Queue only challenges that have an explicitly runnable
-            # challenge-specific adapter. Research puzzles remain visible in
-            # the marketplace but must never enter the compute worker queue.
-            for cid in PRIORITY_BTC_CHALLENGES:
+            # Queue only the highest-ranked challenges whose live telemetry
+            # and audited adapter both say RUN. Research/PAUSE targets remain
+            # visible in the marketplace but never enter the compute queue.
+            rotation = rank_challenges([item.as_registry() for item in records])
+            for ranked in rotation["queue"]:
+                cid = ranked["id"]
                 cur.execute(
                     """insert into jobs(id,puzzle_id,scope,status)
                        select gen_random_uuid(),%s,'public-reward-challenge','QUEUED'
@@ -241,7 +234,7 @@ def sync():
                          and verification_stale=false
                          and payout->>'permissionless'='true'
                          and payout->>'automatic_chain_claim'='true'
-                       order by balance_btc desc,updated_at desc,id asc
+                       order by expected_value_score desc,balance_btc desc,updated_at desc,id asc
                        limit 1"""
                 )
                 replacement = cur.fetchone()
