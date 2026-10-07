@@ -28,8 +28,9 @@ def check(name, ok, detail=""):
 ok=True
 s,h,b=request("/health")
 ok &= check("health", s==200 and b.get("ok") is True and b.get("custody")=="non-custodial", f"{s} {b}")
+ok &= check("security headers", s==200 and h.get("X-Content-Type-Options")=="nosniff" and h.get("X-Frame-Options")=="DENY" and bool(h.get("X-Request-ID")), f"{s} headers={h}")
 s,h,b=request("/ready")
-ok &= check("readiness", s==200 and b.get("ready") is True and b.get("database") is True and b.get("redis") is True, f"{s} {b}")
+ok &= check("readiness", s==200 and b.get("ready") is True and b.get("database") is True and b.get("redis") is True and b.get("jwt") is True, f"{s} {b}")
 s,h,b=request("/marketplace/challenges")
 ok &= check("public marketplace accessible", s==200 and isinstance(b.get("challenges"), list), f"{s} {b}")
 curl = subprocess.run(
