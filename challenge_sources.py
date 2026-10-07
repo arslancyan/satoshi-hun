@@ -3,7 +3,7 @@ import json, os, re, urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from challenge_adapters import get_adapter, runtime_contract
+from challenge_discovery import adapter_readiness
 
 AUTHORITATIVE_ESCROW_SPEND_SLUGS = set(filter(None, os.getenv("AUTHORITATIVE_ESCROW_SPEND_SLUGS", "peter-todd-hash-collision-bounties-0-59btc").split(",")))
 PUBLIC_CHALLENGE_SLUGS = set(filter(None, os.getenv("PUBLIC_CHALLENGE_SLUGS", "").split(",")))
@@ -371,8 +371,8 @@ class OpenCryptoPuzzlesAdapter:
                     live_sats = int(live_item.get("live_balance_sats") or 0)
                     per_funding_match = expected > 0 and live_sats >= expected
                     per_balance_btc = live_sats / 100_000_000
-                    adapter = get_adapter(stable_id)
-                    adapter_contract = runtime_contract(stable_id)
+                    readiness = adapter_readiness(stable_id)
+                    adapter_contract = readiness["adapter"]
                     per_verification = {
                         **verification,
                         "fingerprint": stable_id,
@@ -383,10 +383,13 @@ class OpenCryptoPuzzlesAdapter:
                         "verified_balance_btc": per_balance_btc,
                         "funding_match": per_funding_match,
                         "escrow_spend_is_authoritative": True,
-                        "execution_mode": adapter_contract["execution_mode"] if adapter_contract["adapter_registered"] else "RESEARCH",
+                        "execution_mode": adapter_contract["execution_mode"] if adapter_contract.get("adapter_registered") else "RESEARCH",
                         "adapter_id": adapter_contract.get("adapter_id"),
                         "adapter_status": adapter_contract.get("adapter_status"),
-                        "adapter_runnable": adapter_contract.get("runnable", False),
+                        "adapter_runnable": readiness["execution_allowed"],
+                        "adapter_readiness": readiness["readiness"],
+                        "adapter_execution_allowed": readiness["execution_allowed"],
+                        "adapter_reason": readiness["reason"],
                         "difficulty_left": "research-breakthrough",
                         "difficulty_note": "Hash-collision bounty; generic full-width collision search is computationally infeasible.",
                         "search_metrics": puzzle.get("search_metrics") or puzzle.get("runtime_metrics") or {},
@@ -415,16 +418,20 @@ class OpenCryptoPuzzlesAdapter:
                         )
                     )
             else:
-                adapter = get_adapter(str(puzzle["slug"]))
-                adapter_contract = runtime_contract(str(puzzle["slug"]))
-                verification["execution_mode"] = adapter_contract["execution_mode"]
+                stable_id = ID_ALIASES.get(str(puzzle["slug"]), str(puzzle["slug"]))
+                readiness = adapter_readiness(stable_id)
+                adapter_contract = readiness["adapter"]
+                verification["execution_mode"] = adapter_contract["execution_mode"] if adapter_contract.get("adapter_registered") else "RESEARCH"
                 verification["adapter_id"] = adapter_contract.get("adapter_id")
                 verification["adapter_status"] = adapter_contract.get("adapter_status")
-                verification["adapter_runnable"] = adapter_contract.get("runnable", False)
+                verification["adapter_runnable"] = readiness["execution_allowed"]
+                verification["adapter_readiness"] = readiness["readiness"]
+                verification["adapter_execution_allowed"] = readiness["execution_allowed"]
+                verification["adapter_reason"] = readiness["reason"]
                 verification["search_metrics"] = puzzle.get("search_metrics") or puzzle.get("runtime_metrics") or {}
                 out.append(
                     LiveSourceRecord(
-                        ID_ALIASES.get(str(puzzle["slug"]), str(puzzle["slug"])),
+                        stable_id,
                         str(puzzle.get("title", puzzle["slug"])),
                         "bitcoin",
                         published_sats / 100_000_000,
