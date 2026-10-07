@@ -310,6 +310,9 @@ class OpenCryptoPuzzlesAdapter:
                 "catalog_last_updated": puzzle.get("last_updated"),
                 "checked_at": _now(),
             }
+            difficulty_left = str(puzzle.get("difficulty_left", "") or "")
+            difficulty_note = str(puzzle.get("difficulty_note", "") or "")
+            leads = puzzle.get("leads") or []
             verification = {
                 "method": "live-public-escrow",
                 "source_id": self.adapter_id,
@@ -329,6 +332,10 @@ class OpenCryptoPuzzlesAdapter:
                 "dual_explorer_match": True,
                 "solve_evidence_policy": "exact-escrow-utxo-spend-required",
                 "escrow_spend_is_authoritative": puzzle.get("slug") in AUTHORITATIVE_ESCROW_SPEND_SLUGS,
+                "difficulty_left": difficulty_left,
+                "difficulty_note": difficulty_note,
+                "leads": leads[:5],
+                "execution_mode": "RESEARCH",
             }
             payout = {
                 "mode": "DIRECT_PUBLIC_ESCROW",
@@ -371,6 +378,9 @@ class OpenCryptoPuzzlesAdapter:
                         "verified_balance_btc": per_balance_btc,
                         "funding_match": per_funding_match,
                         "escrow_spend_is_authoritative": True,
+                        "execution_mode": "COMPUTE",
+                        "difficulty_left": "research-breakthrough",
+                        "difficulty_note": "Hash-collision bounty; generic full-width collision search is computationally infeasible.",
                     }
                     per_provenance = {
                         **provenance,
