@@ -279,18 +279,18 @@ class MCPIdentityRequest(BaseModel):
 def mcp_connection_status():
     """Public, non-secret MCP deployment status for connection diagnostics."""
     enabled = os.environ.get("MCP_ENABLED", "false").strip().lower() == "true"
-    configured = all(
-        os.environ.get(key, "").strip()
-        for key in (
-            "MCP_OAUTH_ISSUER",
-            "MCP_RESOURCE_URL",
-            "MCP_OAUTH_INTROSPECTION_URL",
-        )
-    )
+    issuer = os.environ.get("MCP_OAUTH_ISSUER", "").strip()
+    resource = os.environ.get("MCP_RESOURCE_URL", "").strip()
+    jwks = os.environ.get("MCP_OAUTH_JWKS_URL", "").strip()
+    introspection = os.environ.get("MCP_OAUTH_INTROSPECTION_URL", "").strip()
+    configured = bool(issuer and resource and (jwks or introspection))
     return {
         "mcp_enabled": enabled,
         "oauth_configured": configured,
-        "resource_url": os.environ.get("MCP_RESOURCE_URL", "").strip() or None,
+        "oauth_verification_mode": "jwks" if jwks else ("introspection" if introspection else None),
+        "resource_url": resource or None,
+        "oauth_issuer": issuer or None,
+        "jwks_configured": bool(jwks),
         "required_scopes": ["worker:read", "worker:control"],
         "identity_linking": "explicit_issuer_subject_mapping",
         "write_actions_require_confirmation": True,
