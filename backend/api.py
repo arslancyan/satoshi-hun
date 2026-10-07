@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
+from contextlib import asynccontextmanager
 
 import jwt
 import psycopg
@@ -40,11 +41,33 @@ MAX_DAILY_PAYOUT_BTC = Decimal(os.environ.get("MAX_DAILY_PAYOUT_BTC", "0.005"))
 PAYOUT_RETRY_AFTER_MINUTES = max(5, int(os.environ.get("PAYOUT_RETRY_AFTER_MINUTES", "15")))
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
-app = FastAPI(title="Satoshi Hunt API", version="0.1.1")
+try:
+    from mcp.server import mcp as worker_mcp
+except ImportError:  # pragma: no cover - optional until MCP dependency is installed
+    worker_mcp = None
+
+
+@asynccontextmanager
+async def app_lifespan(_app):
+    if worker_mcp is None:
+        yield
+        return
+    async with worker_mcp.session_manager.run():
+        yield
+
+
+app = FastAPI(title="Satoshi Hunt API", version="0.1.1", lifespan=app_lifespan)
 
 ALLOWED_FRONTEND_ORIGINS = list(dict.fromkeys(
     origin for origin in (FRONTEND_ORIGIN, "https://arslancyan.github.io") if origin
 ))
+
+# MCP is mounted into the existing API service so Railway does not need a second service.
+# Keep it disabled until production OAuth 2.1 is configured.
+if worker_mcp is not None and os.environ.get("MCP_ENABLED", "false").strip().lower() == "true":
+    worker_mcp.settings.streamable_http_path = "/"
+    app.mount("/mcp", worker_mcp.streamable_http_app())
+
 
 if ALLOWED_FRONTEND_ORIGINS:
     app.add_middleware(
