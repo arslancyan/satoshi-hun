@@ -65,21 +65,48 @@ def audit_adapter(spec: AdapterSpec) -> list[str]:
                 errors.append(f"solver_entrypoint import failed: {exc}")
             else:
                 for vector in spec.test_vectors:
-                    algorithm = str(vector.get("algorithm", "")).lower()
-                    message = str(vector.get("message", ""))
-                    if not algorithm or not message:
-                        errors.append("audited/runnable test vector needs algorithm and message")
-                        continue
-                    expected = EXPECTED_DIGESTS.get((algorithm, message))
-                    if expected is None:
-                        errors.append(f"no pinned expected digest for {algorithm}:{message}")
-                        continue
-                    result = verifier(algorithm, message.encode()).hex()
-                    if result != expected:
-                        errors.append(
-                            f"test vector mismatch for {algorithm}:{message}: "
-                            f"{result} != {expected}"
+                    if {"algorithm", "message"} <= set(vector):
+                        algorithm = str(vector.get("algorithm", "")).lower()
+                        message = str(vector.get("message", ""))
+                        if not algorithm or not message:
+                            errors.append("audited/runnable test vector needs algorithm and message")
+                            continue
+                        expected = EXPECTED_DIGESTS.get((algorithm, message))
+                        if expected is None:
+                            errors.append(f"no pinned expected digest for {algorithm}:{message}")
+                            continue
+                        result = verifier(algorithm, message.encode()).hex()
+                        if result != expected:
+                            errors.append(
+                                f"test vector mismatch for {algorithm}:{message}: "
+                                f"{result} != {expected}"
+                            )
+                    elif {"challenge", "difficulty_bits", "max_nonce"} <= set(vector):
+                        challenge = str(vector["challenge"])
+                        difficulty = int(vector["difficulty_bits"])
+                        max_nonce = int(vector["max_nonce"])
+                        if max_nonce < 0 or max_nonce > 10_000_000:
+                            errors.append("bounded PoW test vector max_nonce must be finite and <= 10,000,000")
+                            continue
+                        try:
+                            solved = verifier(challenge, difficulty, max_nonce, max_attempts=max_nonce + 1)
+                        except Exception as exc:
+                            errors.append(f"bounded PoW vector execution failed: {exc}")
+                            continue
+                        if not solved:
+                            errors.append("bounded PoW test vector did not produce a solution")
+                            continue
+                        if int(solved["nonce"]) > max_nonce:
+                            errors.append("bounded PoW solver returned nonce outside declared range")
+                            continue
+                        from challenge_adapters.bounded_leading_zero import verify as verify_bounded
+                        checked = verify_bounded(
+                            challenge, difficulty, int(solved["nonce"]), str(solved["hash"]), max_nonce
                         )
+                        if not checked.get("valid"):
+                            errors.append("bounded PoW test vector failed independent verifier")
+                    else:
+                        errors.append("unsupported audited/runnable test vector schema")
         return errors
 
     if spec.execution_mode == "COMPUTE":
