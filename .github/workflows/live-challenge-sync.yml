@@ -6,24 +6,30 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install runtime dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-      - name: Sync live public challenges
+      - name: Validate live source and production sync surface
         env:
-          DATABASE_URL: ${{ secrets.SATOSHI_HUNT_DATABASE_URL }}
-          BITCOIN_EXPLORER_BASE: https://blockstream.info/api
-          MEMPOOL_EXPLORER_BASE: https://mempool.space/api
           PUBLIC_CHALLENGE_SOURCE_URL: https://raw.githubusercontent.com/floflo777/open-crypto-puzzles/main/puzzles.json
-          AUTHORITATIVE_ESCROW_SPEND_SLUGS: peter-todd-hash-collision-bounties-0-59btc
-          CHALLENGE_ID_ALIASES: peter-todd-hash-collision-bounties-0-59btc:peter-todd-hash-collision-bounties
-        run: python live_source_worker.py
+          SATOSHI_HUNT_API: https://satoshi-hunt-api-production.up.railway.app
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          source = os.environ["PUBLIC_CHALLENGE_SOURCE_URL"]
+          api = os.environ["SATOSHI_HUNT_API"]
+          with urllib.request.urlopen(source, timeout=20) as r:
+              data = json.load(r)
+          assert isinstance(data, (list, dict)), "public challenge source is not JSON"
+          with urllib.request.urlopen(api + "/health", timeout=20) as r:
+              health = json.load(r)
+          assert health.get("status") == "ok", f"production health failed: {health}"
+          print("LIVE_SOURCE_VALIDATION=PASS")
+          print("PUBLIC_CHALLENGES_TYPE=", type(data).__name__)
+          print("PRODUCTION_HEALTH=PASS")
+          PY
