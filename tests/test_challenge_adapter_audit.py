@@ -39,3 +39,18 @@ def test_malformed_runnable_adapter_is_rejected():
         test_vectors=({"algorithm": "sha256", "message": "satoshi-hunt:0"},),
     )
     assert audit.audit_adapter(broken)
+
+
+def test_audited_lifecycle_is_distinct_from_verified():
+    from dataclasses import replace
+    base = ADAPTERS["peter-todd-sha256-bounty"]
+    audited = replace(
+        base,
+        status="AUDITED",
+        execution_mode="COMPUTE",
+        search_space="bounded:test-domain",
+        solver_entrypoint="challenge_adapter_audit:_digest",
+        test_vectors=({"algorithm": "sha256", "message": "satoshi-hunt:0"},),
+    )
+    assert audit.classify(audited.challenge_id) == "AUDITED"
+    assert audit.audit_adapter(audited) == []
