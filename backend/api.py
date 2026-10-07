@@ -39,6 +39,7 @@ PAYOUT_WORKER_TOKEN = os.environ.get("PAYOUT_WORKER_TOKEN", "").strip()
 MAX_SINGLE_PAYOUT_BTC = Decimal(os.environ.get("MAX_SINGLE_PAYOUT_BTC", "0.001"))
 MAX_DAILY_PAYOUT_BTC = Decimal(os.environ.get("MAX_DAILY_PAYOUT_BTC", "0.005"))
 PAYOUT_RETRY_AFTER_MINUTES = max(5, int(os.environ.get("PAYOUT_RETRY_AFTER_MINUTES", "15")))
+MCP_INTERNAL_SECRET = os.environ.get("MCP_INTERNAL_SECRET", "").strip()
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 try:
@@ -256,6 +257,42 @@ def _bech32_valid(address: str) -> bool:
 def valid_btc_mainnet_address(address: str) -> bool:
     value = address.strip()
     return _base58check_valid(value) or _bech32_valid(value)
+
+class MCPIdentityRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=256)
+    email: EmailStr | None = None
+
+
+@app.post("/internal/mcp/session")
+def issue_mcp_worker_session(body: MCPIdentityRequest, request: Request):
+    """Exchange a verified MCP identity for a short-lived Satoshi Hunt worker session.
+
+    This endpoint is private to the MCP resource server. The OAuth bearer token
+    is never forwarded to the application API.
+    """
+    if not MCP_INTERNAL_SECRET or not secrets.compare_digest(
+        request.headers.get("x-mcp-internal-secret", ""),
+        MCP_INTERNAL_SECRET,
+    ):
+        raise HTTPException(404, "Not found")
+    account_id = None
+    try:
+        account_id = UUID(body.subject)
+    except ValueError:
+        account_id = None
+    with db() as conn:
+        with conn.cursor() as cur:
+            if account_id is not None:
+                cur.execute("select id from accounts where id=%s", (account_id,))
+            elif body.email:
+                cur.execute("select id from accounts where email=%s", (body.email.lower().strip(),))
+            else:
+                cur.execute("select id from accounts where email=%s", ("",))
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(403, "MCP identity is not linked to a Satoshi Hunt account")
+    return {"session": issue_session(row[0]), "expires_in": SESSION_TTL, "scope": "worker:read worker:control"}
+
 
 class LinkRequest(BaseModel):
     email: EmailStr
