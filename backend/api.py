@@ -30,6 +30,8 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "")
 SESSION_TTL = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
 ASSIGNMENT_TIMEOUT_SECONDS = max(30, int(os.environ.get("ASSIGNMENT_TIMEOUT_SECONDS", "120")))
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "https://arslancyan.github.io").strip()
+JWT_ISSUER = os.environ.get("JWT_ISSUER", "satoshi-hunt")
+JWT_AUDIENCE = os.environ.get("JWT_AUDIENCE", "satoshi-hunt-web")
 CHALLENGE_INGESTION_KEY = os.environ.get("CHALLENGE_INGESTION_KEY", "")
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "").strip().lower()
 RATE_LIMIT_REDIS_URL = os.environ.get("RATE_LIMIT_REDIS_URL", "")
@@ -93,7 +95,7 @@ if ALLOWED_FRONTEND_ORIGINS:
         allow_origins=ALLOWED_FRONTEND_ORIGINS,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "OPTIONS"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
     )
 
 @app.middleware("http")
@@ -109,6 +111,7 @@ async def enforce_public_cors_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
     origin = request.headers.get("origin")
     if origin in ALLOWED_FRONTEND_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
@@ -190,7 +193,7 @@ def issue_session(account_id: UUID) -> str:
         raise HTTPException(503, "JWT_SECRET is not configured")
     now = datetime.now(timezone.utc)
     return jwt.encode(
-        {"sub": str(account_id), "iat": now, "exp": now + timedelta(seconds=SESSION_TTL)},
+        {"sub": str(account_id), "iat": now, "exp": now + timedelta(seconds=SESSION_TTL), "iss": JWT_ISSUER, "aud": JWT_AUDIENCE},
         JWT_SECRET,
         algorithm="HS256",
     )
@@ -202,7 +205,7 @@ def account_id_from_auth(authorization: str = Header(default="")) -> UUID:
     try:
         if not JWT_SECRET:
             raise HTTPException(503, "JWT_SECRET is not configured")
-        payload = jwt.decode(authorization[7:], JWT_SECRET, algorithms=["HS256"])
+        payload = jwt.decode(authorization[7:], JWT_SECRET, algorithms=["HS256"], issuer=JWT_ISSUER, audience=JWT_AUDIENCE)
         return UUID(payload["sub"])
     except HTTPException:
         raise
