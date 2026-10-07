@@ -15,12 +15,12 @@ def request(path, method="GET", data=None, headers=None):
             raw = r.read().decode(errors="replace")
             try: payload = json.loads(raw) if raw else {}
             except Exception: payload = {"raw": raw}
-            return r.status, dict(r.headers), payload
+            return r.status, {str(k).lower(): v for k,v in r.headers.items()}, payload
     except urllib.error.HTTPError as e:
         raw=e.read().decode(errors="replace")
         try: payload=json.loads(raw) if raw else {}
         except Exception: payload={"raw":raw}
-        return e.code, dict(e.headers), payload
+        return e.code, {str(k).lower(): v for k,v in e.headers.items()}, payload
 
 def check(name, ok, detail=""):
     print(f"[{'PASS' if ok else 'FAIL'}] {name}" + (f": {detail}" if detail else ""))
@@ -44,7 +44,7 @@ if EXPECTED_COMMIT:
 else:
     s,h,b=request("/health")
 ok &= check("health", s==200 and b.get("ok") is True and b.get("custody")=="non-custodial", f"{s} {b}")
-ok &= check("security headers", s==200 and h.get("X-Content-Type-Options")=="nosniff" and h.get("X-Frame-Options")=="DENY" and bool(h.get("X-Request-ID")), f"{s} headers={h}")
+ok &= check("security headers", s==200 and h.get("x-content-type-options")=="nosniff" and h.get("x-frame-options")=="DENY" and bool(h.get("x-request-id")), f"{s} headers={h}")
 s,h,b=request("/ready")
 ok &= check("readiness", s==200 and b.get("ready") is True and b.get("database") is True and b.get("redis") is True and b.get("jwt") is True, f"{s} {b}")
 s,h,b=request("/marketplace/challenges")
