@@ -2398,7 +2398,7 @@ class PayoutAddressUpdate(BaseModel):
 
 
 class WithdrawalCreate(BaseModel):
-    amount_btc: float = Field(gt=0)
+    amount_btc: Decimal = Field(gt=Decimal("0"))
 
 
 @app.put("/account/payout-address")
@@ -2476,7 +2476,7 @@ def create_withdrawal(body: WithdrawalCreate, request: Request, account_id: UUID
             cur.execute("select available_btc from reward_balances where account_id=%s for update", (account_id,))
             row=cur.fetchone()
             available=Decimal(str(row[0] if row else 0))
-            amount=Decimal(str(body.amount_btc))
+            amount=body.amount_btc
             if amount > available:
                 raise HTTPException(400, "Withdrawal exceeds available reward balance")
             cur.execute(
