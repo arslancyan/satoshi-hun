@@ -43,7 +43,7 @@ MCP_INTERNAL_SECRET = os.environ.get("MCP_INTERNAL_SECRET", "").strip()
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 try:
-    from satoshi_mcp_server import mcp as worker_mcp
+    from satoshi_mcp_server import mcp as worker_mcp, auth_settings as worker_mcp_auth_settings, token_verifier as worker_mcp_token_verifier
 except ImportError:  # pragma: no cover - optional until MCP dependency is installed
     worker_mcp = None
 
@@ -66,8 +66,20 @@ ALLOWED_FRONTEND_ORIGINS = list(dict.fromkeys(
 # MCP is mounted into the existing API service so Railway does not need a second service.
 # Keep it disabled until production OAuth 2.1 is configured.
 if worker_mcp is not None and os.environ.get("MCP_ENABLED", "false").strip().lower() == "true":
-    worker_mcp.settings.streamable_http_path = "/"
-    app.mount("/mcp", worker_mcp.streamable_http_app())
+    allowed_hosts = [
+        host.strip() for host in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if host.strip()
+    ] or ["satoshi-hunt-api-production.up.railway.app", "satoshi-hunt-api-production.up.railway.app:*"]
+    from mcp.server.transport_security import TransportSecuritySettings
+    worker_mcp_app = worker_mcp.streamable_http_app(
+        streamable_http_path="/",
+        auth=worker_mcp_auth_settings,
+        token_verifier=worker_mcp_token_verifier,
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=allowed_hosts,
+            allowed_origins=["https://chatgpt.com", "https://chat.openai.com"],
+        ),
+    )
+    app.mount("/mcp", worker_mcp_app)
 
 
 if ALLOWED_FRONTEND_ORIGINS:
