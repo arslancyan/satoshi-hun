@@ -23,11 +23,7 @@ jobs:
       - name: Compile Python modules
         run: python -m compileall -q backend *.py tests
       - name: Materialize runtime API for source tests
-        run: |
-          mkdir -p /app/backend
-          cp backend/api.py /app/backend/api.py
-          python tools/runtime_patch.py
-          cp /app/backend/api.py backend/api.py
+        run: SATOSHI_HUNT_API_PATH="$GITHUB_WORKSPACE/backend/api.py" python tools/runtime_patch.py
       - name: Run tests
         run: pytest -q
       - name: Run staging smoke contract

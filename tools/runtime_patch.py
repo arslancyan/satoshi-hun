@@ -1,6 +1,7 @@
 from pathlib import Path
+import os
 
-p=Path("/app/backend/api.py")
+p=Path(os.environ.get("SATOSHI_HUNT_API_PATH", "/app/backend/api.py"))
 s=p.read_text()
 
 old='''            cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')",(job_id,))
