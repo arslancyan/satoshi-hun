@@ -3,6 +3,7 @@ import json, os, re, urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from challenge_adapters import get_adapter, runtime_contract
 
 AUTHORITATIVE_ESCROW_SPEND_SLUGS = set(filter(None, os.getenv("AUTHORITATIVE_ESCROW_SPEND_SLUGS", "peter-todd-hash-collision-bounties-0-59btc").split(",")))
 PUBLIC_CHALLENGE_SLUGS = set(filter(None, os.getenv("PUBLIC_CHALLENGE_SLUGS", "").split(",")))
@@ -368,7 +369,7 @@ class OpenCryptoPuzzlesAdapter:
                     live_sats = int(live_item.get("live_balance_sats") or 0)
                     per_funding_match = expected > 0 and live_sats >= expected
                     per_balance_btc = live_sats / 100_000_000
-                    per_verification = {
+                    adapter = get_adapter(stable_id)\n                    adapter_contract = runtime_contract(stable_id)\n                    per_verification = {
                         **verification,
                         "fingerprint": stable_id,
                         "allowed_algorithms": [algorithm],
@@ -378,7 +379,7 @@ class OpenCryptoPuzzlesAdapter:
                         "verified_balance_btc": per_balance_btc,
                         "funding_match": per_funding_match,
                         "escrow_spend_is_authoritative": True,
-                        "execution_mode": "COMPUTE",
+                        "execution_mode": adapter_contract["execution_mode"] if adapter_contract["adapter_registered"] else "RESEARCH",\n                        "adapter_id": adapter_contract.get("adapter_id"),\n                        "adapter_status": adapter_contract.get("adapter_status"),\n                        "adapter_runnable": adapter_contract.get("runnable", False),
                         "difficulty_left": "research-breakthrough",
                         "difficulty_note": "Hash-collision bounty; generic full-width collision search is computationally infeasible.",
                     }
