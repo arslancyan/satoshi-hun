@@ -14,8 +14,9 @@ def test_research_adapters_are_registered_but_not_runnable():
         assert not spec.runnable
 
 
-def test_no_unbounded_public_collision_adapter_is_runnable():
-    assert runnable_challenge_ids() == set()
+def test_unbounded_public_collision_adapters_are_not_runnable():
+    runnable = runnable_challenge_ids()
+    assert "base-leading-zero-canary" in runnable
     for challenge_id in (
         "peter-todd-sha256-bounty",
         "peter-todd-ripemd160-bounty",
@@ -33,6 +34,14 @@ def test_runtime_contract_exposes_research_reason():
     assert contract["adapter_registered"] is True
     assert contract["runnable"] is False
     assert "bounded" in contract["notes"] or "passphrase" in contract["notes"]
+
+
+def test_bounded_public_pow_adapter_contract():
+    contract = runtime_contract("base-leading-zero-canary")
+    assert contract["adapter_registered"] is True
+    assert contract["runnable"] is True
+    assert contract["execution_mode"] == "COMPUTE"
+    assert contract["adapter_audited"] is True
 
 
 def test_audited_adapter_is_not_runnable_until_explicitly_enabled():
