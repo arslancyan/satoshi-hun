@@ -44,6 +44,7 @@ jobs:
           SATOSHI_HUNT_ENV: staging
           RATE_LIMIT_REDIS_URL: redis://127.0.0.1:6379/0
           OWNER_EMAIL: owner@example.com
+          PAYOUT_WORKER_TOKEN: staging-payout-worker-token
         run: |
           uvicorn backend.api:app --host 127.0.0.1 --port 8000 >/tmp/satoshi-hunt-api.log 2>&1 &
           python -c "import time,urllib.request; time.sleep(3); urllib.request.urlopen('http://127.0.0.1:8000/health')"
