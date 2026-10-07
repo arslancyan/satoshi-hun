@@ -2033,7 +2033,7 @@ def list_withdrawals(request: Request, account_id: UUID = Depends(account_id_fro
             cur.execute("""
                 select id,account_id,amount_btc,payout_address,status,external_reference,created_at,processed_at
                 from withdrawal_requests
-                where status in ('QUEUED','PROCESSING')
+                where status in ('QUEUED','PROCESSING','PAID')
                 order by created_at asc
                 limit 100
             """)
