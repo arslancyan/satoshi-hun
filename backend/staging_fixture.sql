@@ -1,5 +1,21 @@
 -- Staging-only deterministic challenge fixture.
 -- Loaded only when SATOSHI_HUNT_ENV=staging.
+-- Staging treasury: fund the deterministic reward rail with the same public
+-- amount as the fixture reward so verified claims can exercise accounting.
+insert into treasury_wallets(id,label,network,address,status)
+values (
+  '00000000-0000-0000-0000-000000000001',
+  'Satoshi Hunt BTC Treasury',
+  'bitcoin-mainnet',
+  'bc1ptstlyntypqqf8s5qz3jwcsrxw2pxqj634c7pklj2mjlvqwl22l6qqq8csl',
+  'ACTIVE'
+)
+on conflict (id) do update set funded_btc=excluded.id;
+
+insert into treasury_accounting(id,funded_btc,reserved_btc,solver_liability_btc,owner_liability_btc)
+values ('00000000-0000-0000-0000-000000000001',0.00100000,0,0,0)
+on conflict (id) do update set funded_btc=0.00100000,reserved_btc=0;
+
 insert into challenge_registry (
   id,title,challenge_type,reward_btc,balance_btc,status,rules,
   provenance,verification,payout,source_adapter,live_checked_at,live_verification,
