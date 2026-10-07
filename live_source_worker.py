@@ -91,12 +91,56 @@ def _refresh_telemetry(cur, records):
             ("worker_id","assignment_status","last_heartbeat_at","worker_last_seen_at",
              "started_at","assigned_at","verified_seconds","claim_count"), row
         )) for row in cur.fetchall()]
+
+        # Checkpoint telemetry is server-observed work, not a catalog estimate.
+        # Use the latest checkpoint per assignment for cumulative searched work
+        # and checkpoint deltas within the measurement window for attempts/sec.
+        cur.execute(
+            """with latest as (
+                   select distinct on (jc.assignment_id)
+                          jc.assignment_id,jc.cursor_start,jc.cursor_next
+                     from job_checkpoints jc
+                     join jobs j on j.id=jc.job_id
+                    where j.puzzle_id=%s
+                      and j.scope='public-reward-challenge'
+                    order by jc.assignment_id,jc.created_at desc,jc.id desc
+               ),
+               windowed as (
+                   select jc.assignment_id,
+                          max(jc.cursor_next)-min(jc.cursor_next) as delta,
+                          extract(epoch from max(jc.created_at)-min(jc.created_at)) as elapsed
+                     from job_checkpoints jc
+                     join jobs j on j.id=jc.job_id
+                    where j.puzzle_id=%s
+                      and j.scope='public-reward-challenge'
+                      and jc.created_at >= now() - (%s * interval '1 second')
+                    group by jc.assignment_id
+               )
+               select
+                   coalesce(sum(greatest(0, latest.cursor_next-latest.cursor_start)),0),
+                   coalesce(sum(greatest(0, windowed.delta)),0),
+                   coalesce(sum(greatest(0, windowed.elapsed)),0)
+                 from latest
+                 left join windowed on windowed.assignment_id=latest.assignment_id""",
+            (item.id, item.id, TELEMETRY_WINDOW_SECONDS),
+        )
+        searched_row, delta_row, elapsed_row = cur.fetchone()
+        checkpoint_searched = max(0, int(searched_row or 0))
+        checkpoint_delta = max(0, int(delta_row or 0))
+        checkpoint_elapsed = max(0.0, float(elapsed_row or 0.0))
+        measured_rate = (
+            checkpoint_delta / checkpoint_elapsed
+            if checkpoint_delta > 0 and checkpoint_elapsed > 0
+            else 0.0
+        )
+
         telemetry = collect_from_rows(
             rows, reward_btc=float(r.get("reward_btc") or 0),
             claim_window_seconds=TELEMETRY_WINDOW_SECONDS,
             heartbeat_timeout_seconds=HEARTBEAT_TIMEOUT_SECONDS,
-            keyspace_total=total, keyspace_searched=searched,
-            measured_attempts_per_second=metrics.get("audited_attempts_per_second"),
+            keyspace_total=total,
+            keyspace_searched=max(searched, checkpoint_searched),
+            measured_attempts_per_second=measured_rate,
             reliability=float(metrics.get("reliability") or 1.0),
         )
         # Preserve catalog/source fields while making provenance explicit.
