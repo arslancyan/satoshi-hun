@@ -2512,3 +2512,48 @@ def create_withdrawal(body: WithdrawalCreate, request: Request, account_id: UUID
             idempotency_store(cur, account_id, request, payload, response)
             return response
 
+
+
+# --- Account notifications + owner live worker monitor ---------------------
+@app.get("/account/notifications")
+def account_notifications(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,title,message,read_at,created_at from account_notifications where account_id=%s order by created_at desc limit 50",(account_id,))
+            rows=cur.fetchall()
+    return {"notifications":[{"id":str(r[0]),"title":r[1],"message":r[2],"read_at":r[3],"created_at":r[4]} for r in rows]}
+
+@app.post("/account/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("update account_notifications set read_at=coalesce(read_at,now()) where id=%s and account_id=%s returning id,read_at",(notification_id,account_id))
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"Notification not found")
+    return {"id":str(row[0]),"read_at":row[1]}
+
+@app.post("/account/notifications/read-all")
+def mark_all_notifications_read(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("update account_notifications set read_at=coalesce(read_at,now()) where account_id=%s and read_at is null",(account_id,))
+            count=cur.rowcount
+    return {"marked_read":count}
+
+@app.get("/admin/workers/live")
+def admin_workers_live(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("select count(*) from workers where status='ACTIVE'")
+            active_workers=cur.fetchone()[0]
+            cur.execute("select count(*) from job_assignments where status='RUNNING'")
+            running_assignments=cur.fetchone()[0]
+            cur.execute("select a.id,a.worker_id,w.label,j.puzzle_id,a.status,a.started_at,a.last_heartbeat_at from job_assignments a join workers w on w.id=a.worker_id join jobs j on j.id=a.job_id where a.status='RUNNING' order by a.started_at asc")
+            rows=cur.fetchall()
+    now=datetime.now(timezone.utc)
+    workers=[]
+    for aid,wid,label,puzzle,status,started,heartbeat in rows:
+        age=(now-heartbeat).total_seconds() if heartbeat else None
+        workers.append({"assignment_id":str(aid),"worker_id":str(wid),"worker_label":label,"puzzle_id":puzzle,"status":status,"started_at":started,"last_heartbeat_at":heartbeat,"heartbeat_age_seconds":age,"heartbeat_healthy":age is not None and age <= ASSIGNMENT_TIMEOUT_SECONDS})
+    return {"active_workers":active_workers,"running_assignments":running_assignments,"checked_at":now,"workers":workers}
