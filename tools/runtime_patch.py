@@ -5,6 +5,22 @@ s=p.read_text()
 
 old='''            cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')",(job_id,))
             if cur.fetchone(): raise HTTPException(409,"Challenge is already being run by another worker")
+            # Account-level exclusivity: switching puzzles pauses the account's
+            # previous active assignment, even when it uses another worker.
+            cur.execute(
+                "update job_assignments set status='PAUSED',completed_at=null "
+                "where worker_id in (select id from workers where account_id=%s) "
+                "and status in ('ASSIGNED','RUNNING') "
+                "returning id,job_id,worker_id",
+                (account_id,),
+            )
+            paused_assignments=cur.fetchall()
+            for paused_id, paused_job_id, paused_worker_id in paused_assignments:
+                cur.execute(
+                    "update jobs set status='QUEUED',completed_at=null "
+                    "where id=%s and status='RUNNING'",
+                    (paused_job_id,),
+                )
             capacity=economic_capacity(cur,job_id)'''
 new='''            cur.execute("select id,status from job_assignments where job_id=%s and worker_id=%s and status in ('ASSIGNED','RUNNING')",(job_id,body.worker_id))
             existing_assignment=cur.fetchone()
