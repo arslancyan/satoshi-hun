@@ -899,6 +899,13 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             payout=challenge[3] or {}
             if payout.get("permissionless") is not True or payout.get("automatic_chain_claim") is not True:
                 raise HTTPException(409,"Challenge payout mechanism is not independently verified")
+            # Research-only challenges are visible in the marketplace, but cannot
+            # enter the worker runtime until a reviewed challenge-specific solver
+            # adapter exists. This prevents a false RUNNING state with no solver.
+            cur.execute("select verification from challenge_registry where id=%s",(challenge_id,))
+            verification_meta = (cur.fetchone() or [{}])[0] or {}
+            if verification_meta.get("execution_mode") != "COMPUTE":
+                raise HTTPException(409,"This bounty is research-only until its challenge-specific solver adapter is enabled")
             cur.execute("select id from workers where id=%s and account_id=%s and status='ACTIVE'",(body.worker_id,account_id))
             if not cur.fetchone(): raise HTTPException(400,"Selected worker is not active or does not belong to this account")
             cur.execute(
