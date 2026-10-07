@@ -183,9 +183,13 @@ def sync():
             for ranked in rotation["ranked"]:
                 metrics = dict(ranked.get("search_metrics") or {})
                 metrics["opportunity_score"] = ranked.get("opportunity_score", 0)
+                # rank_challenges currently returns strategy/opportunity metadata;
+                # preserve the measured EV already produced by telemetry instead
+                # of overwriting it with zero when no top-level EV field exists.
+                expected_value = metrics.get("expected_value_score", 0) or 0
                 cur.execute(
                     "update challenge_registry set search_metrics=%s::jsonb, expected_value_score=%s, updated_at=now() where id=%s",
-                    (json.dumps(metrics), float(ranked.get("expected_value_score") or 0), ranked["id"]),
+                    (json.dumps(metrics), float(expected_value), ranked["id"]),
                 )
             for ranked in rotation["queue"]:
                 cid = ranked["id"]
