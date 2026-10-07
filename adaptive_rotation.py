@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from strategy_router import choose_strategy
+from challenge_registry_policy import queue_gate
 
 
 def _metric(record: dict[str, Any], key: str, default: float = 0.0) -> float:
@@ -68,9 +69,11 @@ def rank_challenges(records: list[dict[str, Any]], *, limit: int = 30,
     ranked = []
     for record in records:
         decision = choose_strategy(record)
+        gate = queue_gate(record)
         item = {
             **record,
             "opportunity_score": opportunity_score(record),
+            "queue_gate": gate,
             "strategy": {
                 "action": decision.action,
                 "reason": decision.reason,
@@ -95,10 +98,7 @@ def rank_challenges(records: list[dict[str, Any]], *, limit: int = 30,
     runnable = [
         x for x in ranked
         if x["strategy"]["action"] == "RUN"
-        and (x.get("verification") or {}).get("adapter_runnable") is True
-        and (x.get("verification") or {}).get("execution_mode") == "COMPUTE"
-        and x.get("status") == "OPEN + FUNDED"
-        and float(x.get("balance_btc") or 0) > 0
+        and x["queue_gate"]["eligible"] is True
     ]
 
     return {
