@@ -1010,8 +1010,41 @@ def marketplace():
             rows=[dict(zip(keys,x)) for x in cur.fetchall()]
             for row in rows:
                 row["selected"]=False
+                row["runnable"]=True
                 row["search_metrics"]=_challenge_search_metrics(cur,row["challenge_id"],row.get("verification"),row["challenge_type"])
-            return {"challenges":rows,"offers":rows}
+
+            # Keep the marketplace broad enough to show the real public puzzle
+            # catalog, while preserving a hard distinction between RUNNABLE
+            # challenges and research/watch candidates. Candidates are never
+            # allowed through the /run endpoint unless all independent gates pass.
+            cur.execute(
+                """select id,title,challenge_type,reward_btc,balance_btc,status,provenance,
+                          verification,payout,source_adapter,live_checked_at,live_verification,
+                          advertised_reward_btc,verified_balance_btc,funding_match,verification_stale,last_live_check_error
+                   from challenge_registry
+                   where source_adapter is not null
+                     and status in ('OPEN + FUNDED','OPEN + UNFUNDED','CANDIDATE_NEEDS_LIVE_VERIFICATION')
+                   order by
+                     case when status='OPEN + FUNDED' then 0
+                          when status='OPEN + UNFUNDED' then 1 else 2 end,
+                     balance_btc desc, updated_at desc, id asc
+                   limit 30"""
+            )
+            catalog=[dict(zip(keys,x)) for x in cur.fetchall()]
+            runnable_ids={row["challenge_id"] for row in rows}
+            for row in catalog:
+                row["selected"]=False
+                row["runnable"]=row["challenge_id"] in runnable_ids
+                row["search_metrics"]=_challenge_search_metrics(cur,row["challenge_id"],row.get("verification"),row["challenge_type"])
+                if row["challenge_id"] in runnable_ids:
+                    row["market_status"]="LIVE · RUNNABLE"
+                elif row["status"]=="OPEN + FUNDED":
+                    row["market_status"]="FUNDED · RESEARCH"
+                elif row["status"]=="OPEN + UNFUNDED":
+                    row["market_status"]="WATCH · NOT FUNDED"
+                else:
+                    row["market_status"]="PENDING · VERIFY"
+            return {"challenges":rows,"offers":catalog,"catalog":catalog}
 
 
 @app.get("/marketplace/challenges/{challenge_id}")
