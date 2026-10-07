@@ -1602,6 +1602,19 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
         "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",
         (job_id,),
     )
+    # A verified claim closes the winning assignment and releases any stale
+    # assignments for the same public job. This is part of the source API so
+    # CI/staging and the production runtime patch share the same lifecycle.
+    cur.execute(
+        "update job_assignments set status='COMPLETED',completed_at=now(),last_heartbeat_at=null "
+        "where id=(select id from job_assignments where job_id=%s and worker_id=%s and status='RUNNING' order by assigned_at desc limit 1)",
+        (job_id,worker_id),
+    )
+    cur.execute(
+        "update job_assignments set status='RELEASED',completed_at=now(),last_heartbeat_at=null "
+        "where job_id=%s and status in ('ASSIGNED','RUNNING')",
+        (job_id,),
+    )
     cur.execute("select account_id from workers where id=%s for update",(worker_id,))
     account_row=cur.fetchone()
     if not account_row:
