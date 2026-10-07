@@ -37,7 +37,7 @@ class AdapterSpec:
     @property
     def runnable(self) -> bool:
         return (
-            self.status == "RUNNABLE"
+            self.status in {"AUDITED", "RUNNABLE"}
             and self.execution_mode == "COMPUTE"
             and bool(self.solver_entrypoint)
             and bool(self.test_vectors)
