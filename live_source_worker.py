@@ -3,6 +3,7 @@ import json, os
 from datetime import datetime, timezone
 import psycopg
 from challenge_sources import OpenCryptoPuzzlesAdapter
+from strategy_router import choose_strategy
 
 DATABASE_URL = os.environ.get("DATABASE_URL","")
 SOURCE_ID = "open-crypto-puzzles-v2"
@@ -22,6 +23,16 @@ def now():
 def _upsert(cur, record, solve_evidence=None):
     r = record.as_registry()
     v = r["verification"]
+    # Compute the public strategy decision from measured telemetry. This is
+    # routing metadata only; it never allocates or executes private-key work.
+    decision = choose_strategy(r)
+    metrics = dict(r.get("search_metrics") or {})
+    metrics["strategy_action"] = decision.action
+    metrics["strategy_reason"] = decision.reason
+    metrics["strategy_score"] = decision.score
+    metrics["strategy_confidence"] = decision.confidence
+    metrics["strategy_signals"] = decision.signals
+    r["search_metrics"] = metrics
     snapshot = {
         "addresses": v.get("addresses", []),
         "checked_at": v.get("checked_at"),
