@@ -43,3 +43,9 @@ credentials, private keys, or an external security assessor.
 - [ ] Complete JWT/session and CORS/CSP review in the deployed environment.
 - [ ] Obtain independent external security review.
 - [ ] Obtain one real bounded public challenge and pass the qualification contract.
+
+## Audit follow-up — 2026-10-07
+
+- Fixed a runtime SQL parameter mismatch in creator approval. The query accepts one parameter and now receives exactly one.
+- Phase 36 closed-beta policy was added fail-closed: beta access cannot promote research challenges, funding alone cannot imply runnable status, and beta capacity is bounded.
+- Production deployment is healthy, but this document intentionally remains open until the remaining live security gates are independently evidenced.
