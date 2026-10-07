@@ -33,7 +33,21 @@ ok("start",*call("/assignments/"+aid+"/start","POST",worker=wt))
 ok("heartbeat",*call("/assignments/"+aid+"/heartbeat","POST",worker=wt))
 claim=ok("verify known solution",*call("/jobs/"+job+"/claims","POST",{"assignment_id":aid,"worker_id":wid,"candidate_hash":"b54609333c7f5082f8e8eb408e40a59d73e9fbe9f546c2adf75347cd941bd22d","result_status":"TESTED","cpu_seconds":1},worker=wt))
 if claim.get("auto_verification",{}).get("verified") is not True: raise SystemExit(1)
-if claim.get("auto_verification",{}).get("withdrawal_queued") is not True: raise SystemExit(1)
+if claim.get("auto_verification",{}).get("settlement_status") != "REVIEW": raise SystemExit(1)
+reward_id=claim["auto_verification"]["reward_id"]
+
+owner_email="owner@example.com"
+owner_password="Owner-"+secrets.token_urlsafe(12)
+owner_status,owner_signup=call("/auth/register","POST",{"email":owner_email,"password":owner_password})
+if owner_status==200:
+    owner_session=owner_signup["session"]
+elif owner_status==409:
+    raise SystemExit("owner account already exists; staging E2E needs a disposable owner identity")
+else:
+    raise SystemExit(f"owner signup failed: {owner_status} {owner_signup}")
+approved=ok("owner approval",*call("/admin/rewards/"+reward_id+"/approve","POST",{},owner_session))
+if approved.get("status") != "APPROVED": raise SystemExit(1)
+if approved.get("withdrawal_queued") is not True: raise SystemExit(1)
 
 jobs=ok("job lifecycle",*call("/jobs",auth=session))
 job_row=next(x for x in jobs if x["id"]==job)
