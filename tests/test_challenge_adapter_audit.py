@@ -52,5 +52,6 @@ def test_audited_lifecycle_is_distinct_from_verified():
         solver_entrypoint="challenge_adapter_audit:_digest",
         test_vectors=({"algorithm": "sha256", "message": "satoshi-hunt:0"},),
     )
-    assert audit.classify(audited.challenge_id) == "AUDITED"
+    assert audited.audited is True
+    assert audited.runnable is False
     assert audit.audit_adapter(audited) == []
