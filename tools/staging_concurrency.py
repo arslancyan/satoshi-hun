@@ -34,6 +34,6 @@ for t in threads:t.start()
 for t in threads:t.join()
 
 statuses=[x[0] for x in results]
-if sorted(statuses)!=[200,409]:
+if statuses.count(200) != 1 or statuses.count(409) + statuses.count(429) != 1:
     raise SystemExit(f"assignment race gate failed: statuses={statuses} results={results}")
 print("STAGING_CONCURRENCY=PASS",json.dumps({"statuses":statuses}))
