@@ -219,6 +219,8 @@ def sync():
                                where status='OPEN + FUNDED' and balance_btc>0 and funding_match=true
                                  and verification_stale=false and payout->>'permissionless'='true'
                                  and payout->>'automatic_chain_claim'='true'
+                                 and verification->>'execution_mode'='COMPUTE'
+                                 and verification->>'adapter_runnable'='true'
                                order by expected_value_score desc,balance_btc desc,updated_at desc,id asc limit 1""")
                 replacement = cur.fetchone()
                 if not replacement:
