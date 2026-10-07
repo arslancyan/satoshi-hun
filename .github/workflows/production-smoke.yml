@@ -1,13 +1,17 @@
 name: production-smoke
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["staging-gate-and-railway-deploy"]
+    types: [completed]
 jobs:
   smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
       - name: Run production API smoke checks
         env:
           SATOSHI_HUNT_API: https://satoshi-hunt-api-production.up.railway.app
