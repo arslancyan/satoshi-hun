@@ -5,7 +5,14 @@ def record(id, probability, reward, workers=0, action_ready=True):
     return {
         "id": id,
         "status": "OPEN + FUNDED",
+        "rules": "public-reward-challenge",
         "balance_btc": reward,
+        "funding_match": True,
+        "verification_stale": False,
+        "payout": {
+            "permissionless": True,
+            "automatic_chain_claim": True,
+        },
         "reward_btc": reward,
         "live_checked_at": "2026-10-07T00:00:00+00:00",
         "verification": {
