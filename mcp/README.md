@@ -38,9 +38,13 @@ The browser worker UI continues polling/heartbeating its assignment. If the brow
 
 ## Authentication
 
-The production MCP connector must use OAuth 2.1 with a dedicated worker-control scope. Do not ask users to paste a Satoshi Hunt session token or worker token into ChatGPT. OAuth is the recommended authentication model for authenticated MCP write actions.
+The core Satoshi Hunt product does **not** depend on MCP authentication or an external OAuth provider.
 
-Recommended scopes: worker:read and worker:control. No admin scope is exposed by this connector.
+The browser worker, marketplace, adaptive scheduler, queue gate, account-level one-active-puzzle rule, telemetry and reward lifecycle operate directly through the normal Satoshi Hunt API.
+
+The MCP/ChatGPT layer is optional infrastructure. Do not block production worker operation on MCP, Auth0, OAuth, or ChatGPT connectivity.
+
+If MCP is enabled later, it must retain the same worker-only security boundary and server-side queue validation described below.
 
 ## Tool annotations
 
