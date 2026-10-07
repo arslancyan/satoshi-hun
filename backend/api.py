@@ -790,15 +790,34 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             replay=idempotency_replay(cur,account_id,request,payload)
             if replay is not None: return replay
             cur.execute(
-                """select id,status,balance_btc,payout from challenge_registry
+                """select id,status,balance_btc,payout,verification from challenge_registry
                    where id=%s and status='OPEN + FUNDED' and balance_btc>0
                      and funding_match=true and verification_stale=false
+                     and (
+                       (
+                         coalesce((verification->>'execution_mode'),'RESEARCH')='COMPUTE'
+                         and coalesce((verification->>'adapter_audited'),'false')='true'
+                         and coalesce((verification->>'adapter_runnable'),'false')='true'
+                       )
+                       or (
+                         current_setting('app.satoshi_hunt_env', true)='staging'
+                         and coalesce((verification->>'execution_mode'),'RESEARCH')='VERIFY'
+                         and coalesce((verification->>'adapter_audited'),'false')='true'
+                       )
+                     )
                    for update""",(challenge_id,))
             challenge=cur.fetchone()
             if not challenge: raise HTTPException(409,"Challenge is not live, funded, or runnable")
             payout=challenge[3] or {}
+            verification=challenge[4] or {}
             if payout.get("permissionless") is not True or payout.get("automatic_chain_claim") is not True:
                 raise HTTPException(409,"Challenge payout mechanism is not independently verified")
+            execution_mode=str(verification.get("execution_mode") or "RESEARCH").upper()
+            adapter_audited=verification.get("adapter_audited") is True
+            adapter_runnable=verification.get("adapter_runnable") is True
+            staging_verify = os.environ.get("SATOSHI_HUNT_ENV","").strip().lower() == "staging" and execution_mode == "VERIFY"
+            if not (execution_mode == "COMPUTE" and adapter_audited and adapter_runnable) and not (staging_verify and adapter_audited):
+                raise HTTPException(409,"Challenge does not have an independently audited runnable adapter")
             cur.execute("select id from workers where id=%s and account_id=%s and status='ACTIVE'",(body.worker_id,account_id))
             if not cur.fetchone(): raise HTTPException(400,"Selected worker is not active or does not belong to this account")
             cur.execute(
