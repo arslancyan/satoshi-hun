@@ -19,7 +19,7 @@ def test_payout_completion_requires_external_txid():
     flow=api[start:end]
     assert "min_length=64" in flow
     assert "validate_external_txid" in flow
-    assert 'status='PAID'' in flow
+    assert "status='PAID'" in flow
 
 def test_payout_worker_fails_closed_without_token():
     api=Path("backend/api.py").read_text()
