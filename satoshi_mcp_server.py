@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any
 import httpx
 from pydantic import AnyHttpUrl
@@ -6,11 +7,14 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.auth.middleware.auth_context import get_access_token
+import jwt
 
 API_URL = os.environ.get("SATOSHI_HUNT_API", "https://satoshi-hunt-api-production.up.railway.app").rstrip("/")
 OAUTH_ISSUER = os.environ.get("MCP_OAUTH_ISSUER", "").strip().rstrip("/")
 RESOURCE_URL = os.environ.get("MCP_RESOURCE_URL", "").strip().rstrip("/")
 INTROSPECTION_URL = os.environ.get("MCP_OAUTH_INTROSPECTION_URL", "").strip()
+JWKS_URL = os.environ.get("MCP_OAUTH_JWKS_URL", "").strip()
+OAUTH_AUDIENCE = os.environ.get("MCP_OAUTH_AUDIENCE", RESOURCE_URL).strip().rstrip("/")
 OAUTH_CLIENT_ID = os.environ.get("MCP_OAUTH_CLIENT_ID", "").strip()
 OAUTH_CLIENT_SECRET = os.environ.get("MCP_OAUTH_CLIENT_SECRET", "").strip()
 INTERNAL_SECRET = os.environ.get("MCP_INTERNAL_SECRET", "").strip()
@@ -40,7 +44,7 @@ class IntrospectionVerifier(TokenVerifier):
         audience = claims.get("aud", claims.get("resource"))
         if isinstance(audience, str):
             audience = [audience]
-        if RESOURCE_URL not in (audience or []):
+        if OAUTH_AUDIENCE not in (audience or []) and RESOURCE_URL not in (audience or []):
             return None
         scopes = str(claims.get("scope", "")).split()
         if not all(scope in scopes for scope in REQUIRED_SCOPES):
@@ -58,16 +62,91 @@ class IntrospectionVerifier(TokenVerifier):
             expires_at=int(claims["exp"]) if claims.get("exp") else None,
         )
 
+
+class JWKSVerifier(TokenVerifier):
+    def __init__(self) -> None:
+        self._jwks: dict[str, Any] = {}
+        self._fetched_at = 0.0
+
+    async def _keys(self) -> dict[str, Any]:
+        if self._jwks and time.monotonic() - self._fetched_at < 300:
+            return self._jwks
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(JWKS_URL)
+            response.raise_for_status()
+            body = response.json()
+        keys = {}
+        for item in body.get("keys", []):
+            kid = item.get("kid")
+            if kid:
+                try:
+                    keys[kid] = jwt.algorithms.RSAAlgorithm.from_jwk(item)
+                except Exception:
+                    continue
+        if not keys:
+            raise RuntimeError("No usable OAuth signing keys")
+        self._jwks = keys
+        self._fetched_at = time.monotonic()
+        return keys
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not (JWKS_URL and OAUTH_ISSUER and OAUTH_AUDIENCE and RESOURCE_URL):
+            return None
+        try:
+            header = jwt.get_unverified_header(token)
+            kid = header.get("kid")
+            if not kid:
+                return None
+            keys = await self._keys()
+            key = keys.get(kid)
+            if key is None:
+                self._jwks = {}
+                keys = await self._keys()
+                key = keys.get(kid)
+            if key is None:
+                return None
+            claims = jwt.decode(
+                token,
+                key=key,
+                algorithms=["RS256"],
+                audience=OAUTH_AUDIENCE,
+                issuer=OAUTH_ISSUER,
+                options={"require": ["exp", "iat", "sub"]},
+            )
+        except Exception:
+            return None
+
+        scopes = claims.get("scope", "")
+        if isinstance(scopes, list):
+            scopes = " ".join(str(x) for x in scopes)
+        scopes = str(scopes).split()
+        if not all(scope in scopes for scope in REQUIRED_SCOPES):
+            return None
+
+        subject = str(claims.get("sub") or "")
+        if not subject:
+            return None
+
+        return AccessToken(
+            token=token,
+            client_id=str(claims.get("azp") or claims.get("client_id") or "mcp-client"),
+            scopes=scopes,
+            resource=RESOURCE_URL,
+            subject=subject,
+            claims=claims,
+            expires_at=int(claims["exp"]),
+        )
+
 auth_settings = None
 token_verifier = None
-if OAUTH_ISSUER and RESOURCE_URL and INTROSPECTION_URL:
+if OAUTH_ISSUER and RESOURCE_URL and (JWKS_URL or INTROSPECTION_URL):
     auth_settings = AuthSettings(
         issuer_url=AnyHttpUrl(OAUTH_ISSUER),
         resource_server_url=AnyHttpUrl(RESOURCE_URL),
         required_scopes=REQUIRED_SCOPES,
         validate_token_resource=True,
     )
-    token_verifier = IntrospectionVerifier()
+    token_verifier = JWKSVerifier() if JWKS_URL else IntrospectionVerifier()
 
 mcp = FastMCP(
     "Satoshi Hunt Worker Control",
