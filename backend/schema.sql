@@ -172,6 +172,7 @@ create unique index if not exists uq_reward_event_claim on reward_events(source_
 
 create table if not exists audit_events (
   id uuid primary key,
+  audit_sequence bigserial unique,
   event_type text not null,
   entity_type text not null,
   entity_id text not null,
@@ -183,6 +184,7 @@ create table if not exists audit_events (
   created_at timestamptz not null default now()
 );
 
+create index if not exists idx_audit_events_sequence on audit_events(audit_sequence);
 create index if not exists idx_audit_events_entity on audit_events(entity_type,entity_id,created_at);
 create index if not exists idx_audit_events_account on audit_events(account_id,created_at);
 
