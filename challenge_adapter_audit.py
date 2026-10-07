@@ -18,10 +18,10 @@ from challenge_adapters import ADAPTERS, AdapterSpec
 
 
 EXPECTED_DIGESTS = {
-    ("sha256", "satoshi-hunt:0"): "0b5d5a6e9d1e4e5e3f0f8e9c5f7b4f4a6c9f1d3e1b5c9d7e8f1a2b3c4d5e6f70",
-    ("ripemd160", "satoshi-hunt:0"): "PLACEHOLDER",
-    ("hash160", "satoshi-hunt:0"): "PLACEHOLDER",
-    ("hash256", "satoshi-hunt:0"): "PLACEHOLDER",
+    ("sha256", "satoshi-hunt:0"): "65a68da3e9455fd096284e595aa18116e5e49d92671f35d97719d8f484c3fc0a",
+    ("ripemd160", "satoshi-hunt:0"): "660b4d759de0b70b4f4ccd75213791ebe838f93b",
+    ("hash160", "satoshi-hunt:0"): "bdf2f3fa94e2b54e27a79f1a5495f4389db023bc",
+    ("hash256", "satoshi-hunt:0"): "f6da5a96c8dbd72a0d9d9a02a81387fa58931336ef457b027b6f4a12955815ef",
 }
 
 
