@@ -29,12 +29,13 @@ def test_reward_event_keeps_claim_provenance():
 def test_api_claim_verification_contract():
     api=Path("backend/api.py").read_text()
     claims=api[api.index('@app.post("/jobs/{job_id}/claims")'):]
-    verify=api[api.index('@app.post("/jobs/{job_id}/verify")'):]
+    verify=api[api.index("def auto_credit_verified_claim"):api.index('@app.post("/jobs/{job_id}/claims")')]
     assert 'body.result_status == "VERIFIED"' in claims
     assert "server-side challenge adapter" in claims
     assert "c.result_status='TESTED'" in verify
     assert "source_claim_id" in verify
-    assert "'REVIEW',%s" in verify
+    assert "settlement_status,source_claim_id" in verify
+    assert "values(%s,%s,%s,%s,%s,%s,'REVIEW',%s)" in verify
 
 
 def test_api_assignment_economic_guard_contract():
@@ -67,6 +68,6 @@ def test_claim_lifecycle_requires_active_assignment_and_job():
 
 def test_verified_reward_requires_claim_account_and_split_integrity():
     api = __import__("pathlib").Path("backend/api.py").read_text()
-    verify = api[api.index('@app.post("/jobs/{job_id}/verify")'):]
-    assert 'if claimant_account != account_id:' in verify
+    verify = api[api.index("def auto_credit_verified_claim"):api.index('@app.post("/jobs/{job_id}/claims")')]
+    assert 'if not account_row:' in verify
     assert 'Reward split integrity check failed' in verify
