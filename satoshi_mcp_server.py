@@ -1,11 +1,74 @@
 import os
 from typing import Any
 import httpx
+from pydantic import AnyHttpUrl
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.auth.provider import AccessToken, TokenVerifier
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.auth.middleware.auth_context import get_access_token
 
 API_URL = os.environ.get("SATOSHI_HUNT_API", "https://satoshi-hunt-api-production.up.railway.app").rstrip("/")
-# Development/testing credential. Production ChatGPT connections should use OAuth 2.1
-# and pass the resulting Satoshi Hunt worker-scoped bearer token to this service.
+OAUTH_ISSUER = os.environ.get("MCP_OAUTH_ISSUER", "").strip().rstrip("/")
+RESOURCE_URL = os.environ.get("MCP_RESOURCE_URL", "").strip().rstrip("/")
+INTROSPECTION_URL = os.environ.get("MCP_OAUTH_INTROSPECTION_URL", "").strip()
+OAUTH_CLIENT_ID = os.environ.get("MCP_OAUTH_CLIENT_ID", "").strip()
+OAUTH_CLIENT_SECRET = os.environ.get("MCP_OAUTH_CLIENT_SECRET", "").strip()
+INTERNAL_SECRET = os.environ.get("MCP_INTERNAL_SECRET", "").strip()
+REQUIRED_SCOPES = ["worker:read", "worker:control"]
+
+class IntrospectionVerifier(TokenVerifier):
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if not (INTROSPECTION_URL and OAUTH_ISSUER and RESOURCE_URL):
+            return None
+        auth = (OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET) if OAUTH_CLIENT_ID else None
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    INTROSPECTION_URL,
+                    data={"token": token, "resource": RESOURCE_URL},
+                    auth=auth,
+                )
+                if response.status_code != 200:
+                    return None
+                claims = response.json()
+        except Exception:
+            return None
+        if claims.get("active") is not True:
+            return None
+        if claims.get("iss") and str(claims["iss"]).rstrip("/") != OAUTH_ISSUER:
+            return None
+        audience = claims.get("aud", claims.get("resource"))
+        if isinstance(audience, str):
+            audience = [audience]
+        if RESOURCE_URL not in (audience or []):
+            return None
+        scopes = str(claims.get("scope", "")).split()
+        if not all(scope in scopes for scope in REQUIRED_SCOPES):
+            return None
+        subject = str(claims.get("sub") or "")
+        if not subject:
+            return None
+        return AccessToken(
+            token=token,
+            client_id=str(claims.get("client_id") or claims.get("azp") or "mcp-client"),
+            scopes=scopes,
+            resource=RESOURCE_URL,
+            subject=subject,
+            claims=claims,
+            expires_at=int(claims["exp"]) if claims.get("exp") else None,
+        )
+
+auth_settings = None
+token_verifier = None
+if OAUTH_ISSUER and RESOURCE_URL and INTROSPECTION_URL:
+    auth_settings = AuthSettings(
+        issuer_url=AnyHttpUrl(OAUTH_ISSUER),
+        resource_server_url=AnyHttpUrl(RESOURCE_URL),
+        required_scopes=REQUIRED_SCOPES,
+        validate_token_resource=True,
+    )
+    token_verifier = IntrospectionVerifier()
+
 mcp = FastMCP(
     "Satoshi Hunt Worker Control",
     instructions=(
@@ -33,31 +96,50 @@ async def _post(path: str, payload: dict | None = None, token: str | None = None
         r.raise_for_status()
         return r.json()
 
+async def _oauth_api_token() -> str:
+    access = get_access_token()
+    if access is None:
+        raise RuntimeError("Worker OAuth authorization is required")
+    if not INTERNAL_SECRET:
+        raise RuntimeError("MCP_INTERNAL_SECRET is not configured")
+    claims = access.claims or {}
+    payload = {"subject": access.subject or "", "email": claims.get("email") or claims.get("preferred_username")}
+    headers = {"X-MCP-Internal-Secret": INTERNAL_SECRET}
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(API_URL + "/internal/mcp/session", headers=headers, json=payload)
+        r.raise_for_status()
+        return r.json()["session"]
+
 def _token(ctx: Context) -> str:
     auth = (ctx.headers or {}).get("authorization", "")
     if not auth.startswith("Bearer "):
         raise RuntimeError("Worker authorization is required")
     return auth[7:].strip()
 
+async def _api_token(ctx: Context) -> str:
+    if token_verifier is not None:
+        return await _oauth_api_token()
+    return _token(ctx)
+
 @mcp.tool()
 async def satoshi_status(ctx: Context) -> dict:
     """Show the connected Satoshi Hunt worker account status."""
-    return await _get("/me", _token(ctx))
+    return await _get("/me", await _api_token(ctx))
 
 @mcp.tool()
 async def list_live_puzzles(ctx: Context) -> dict:
     """List the live marketplace puzzles and their server-computed queue eligibility."""
-    return await _get("/marketplace/challenges", _token(ctx))
+    return await _get("/marketplace/challenges", await _api_token(ctx))
 
 @mcp.tool()
 async def get_puzzle(challenge_id: str, ctx: Context) -> dict:
     """Get one live puzzle's funding, verification and adapter metadata."""
-    return await _get(f"/marketplace/challenges/{challenge_id}", _token(ctx))
+    return await _get(f"/marketplace/challenges/{challenge_id}", await _api_token(ctx))
 
 @mcp.tool()
 async def get_worker_status(ctx: Context) -> dict:
     """Return active workers and their current assignments for the connected account."""
-    token = _token(ctx)
+    token = await _api_token(ctx)
     workers = await _get("/workers", token)
     result = []
     for worker in workers:
@@ -68,7 +150,7 @@ async def get_worker_status(ctx: Context) -> dict:
 @mcp.tool()
 async def get_worker_jobs(ctx: Context) -> list:
     """List jobs visible to the connected Satoshi Hunt account."""
-    return await _get("/jobs", _token(ctx))
+    return await _get("/jobs", await _api_token(ctx))
 
 @mcp.tool()
 async def get_telemetry(challenge_id: str, ctx: Context) -> dict:
@@ -85,7 +167,7 @@ async def get_telemetry(challenge_id: str, ctx: Context) -> dict:
 @mcp.tool()
 async def get_reward_status(ctx: Context) -> dict:
     """Show the connected account's reward balance and withdrawal status."""
-    return await _get("/account/rewards", _token(ctx))
+    return await _get("/account/rewards", await _api_token(ctx))
 
 @mcp.tool()
 async def rank_puzzles(ctx: Context, limit: int = 20) -> dict:
@@ -121,17 +203,17 @@ async def run_puzzle(challenge_id: str, worker_id: str, ctx: Context) -> dict:
         return {"ok": False, "blocked": True, "challenge_id": challenge_id, "reasons": ["challenge_not_live"]}
     if row.get("queue_eligible") is not True:
         return {"ok": False, "blocked": True, "challenge_id": challenge_id, "reasons": ["central_queue_gate_rejected"]}
-    return await _post(f"/marketplace/challenges/{challenge_id}/run", {"worker_id": worker_id}, _token(ctx))
+    return await _post(f"/marketplace/challenges/{challenge_id}/run", {"worker_id": worker_id}, await _api_token(ctx))
 
 @mcp.tool()
 async def pause_puzzle(assignment_id: str, ctx: Context) -> dict:
     """Pause the connected worker's assignment."""
-    return await _post(f"/assignments/{assignment_id}/pause", {}, _token(ctx))
+    return await _post(f"/assignments/{assignment_id}/pause", {}, await _api_token(ctx))
 
 @mcp.tool()
 async def stop_puzzle(assignment_id: str, ctx: Context) -> dict:
     """Stop the connected worker's assignment."""
-    return await _post(f"/assignments/{assignment_id}/stop", {}, _token(ctx))
+    return await _post(f"/assignments/{assignment_id}/stop", {}, await _api_token(ctx))
 
 @mcp.tool()
 async def switch_puzzle(challenge_id: str, worker_id: str, ctx: Context) -> dict:
@@ -141,7 +223,7 @@ async def switch_puzzle(challenge_id: str, worker_id: str, ctx: Context) -> dict
 @mcp.tool()
 async def restart_worker(worker_id: str, ctx: Context) -> dict:
     """Request a worker heartbeat/control refresh; never grants new permissions."""
-    return await _post(f"/workers/{worker_id}/heartbeat", {}, _token(ctx))
+    return await _post(f"/workers/{worker_id}/heartbeat", {}, await _api_token(ctx))
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
