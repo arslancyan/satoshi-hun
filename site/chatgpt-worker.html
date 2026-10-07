@@ -15,6 +15,20 @@
 <p class="muted">ChatGPT only changes worker assignment/control state. The actual worker keeps running and heartbeating through Satoshi Hunt. Closing the browser can stop the browser-based worker after the normal heartbeat timeout.</p>
 <a class="btn primary" href="https://chatgpt.com/" target="_blank" rel="noreferrer">OPEN CHATGPT</a>
 </div>
+<div class="card" id="mcp-status"><span class="eyebrow">PRODUCTION READINESS</span><h2>MCP connection</h2><p class="muted">Checking the live Satoshi Hunt MCP configuration…</p></div>
+<script>
+(async function(){
+  const box=document.getElementById("mcp-status");
+  try{
+    const r=await fetch("https://satoshi-hunt-api-production.up.railway.app/mcp/connection-status",{cache:"no-store"});
+    const d=await r.json();
+    const p=box.querySelector(".muted");
+    if(!d.mcp_enabled){p.textContent="MCP is not enabled yet. OAuth provider configuration is still required.";return;}
+    if(!d.oauth_configured){p.textContent="MCP is enabled, but OAuth provider configuration is incomplete.";return;}
+    p.textContent="MCP OAuth configuration detected. The production /mcp endpoint is ready for ChatGPT connection testing.";
+  }catch(e){box.querySelector(".muted").textContent="Production MCP status is temporarily unavailable.";}
+})();
+</script>
 <div class="grid">
 <div class="card"><span class="eyebrow">READ</span>
 <div class="cmd"><span>satoshi_status</span><span class="tag">READ</span></div>
