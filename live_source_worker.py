@@ -124,6 +124,21 @@ def _refresh_telemetry(cur, records):
         refreshed.append({**r, "search_metrics": merged})
     return refreshed
 
+def _runtime_locked(cur, challenge_id):
+    """Return True when a challenge has active runtime work that sync must preserve."""
+    cur.execute(
+        """select exists(
+             select 1
+             from job_assignments ja
+             join jobs j on j.id=ja.job_id
+             where j.puzzle_id=%s
+               and (ja.status='RUNNING' or j.status='RUNNING')
+           )""",
+        (challenge_id,),
+    )
+    return bool(cur.fetchone()[0])
+
+
 def sync():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is required")
@@ -152,17 +167,7 @@ def sync():
                 # Never let an upstream catalog refresh overwrite a puzzle with
                 # active runtime state. Store the source snapshot for reconciliation
                 # after the puzzle stops/completes instead.
-                cur.execute(
-                    """select exists(
-                         select 1
-                         from job_assignments ja
-                         join jobs j on j.id=ja.job_id
-                         where j.puzzle_id=%s
-                           and (ja.status='RUNNING' or j.status='RUNNING')
-                       )""",
-                    (item.id,),
-                )
-                runtime_locked = bool(cur.fetchone()[0])
+                runtime_locked = _runtime_locked(cur, item.id)
                 if runtime_locked:
                     cur.execute(
                         """update challenge_registry
