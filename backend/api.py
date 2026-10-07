@@ -115,7 +115,7 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
                 with conn.cursor() as cur:
                     cur.execute(
                         "update job_assignments set status='RUNNING',started_at=coalesce(started_at,now()),last_heartbeat_at=now() "
-                        "where id=%s and worker_id=%s and status='ASSIGNED'",
+                        "where id=%s and worker_id=%s and status in ('ASSIGNED','RUNNING')",
                         (assignment_id, worker_id),
                     )
                     cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'", (job_id,))
@@ -219,6 +219,40 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
     thread = threading.Thread(target=runner, name=f"managed-solver-{key[:8]}", daemon=True)
     state["thread"] = thread
     thread.start()
+
+
+def _recover_managed_solvers():
+    """Resume website-started solvers after an API process restart/deploy."""
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """select a.id,a.job_id,a.worker_id
+                       from job_assignments a
+                       join jobs j on j.id=a.job_id
+                       join challenge_registry c on c.id=j.puzzle_id
+                       where a.status='RUNNING'
+                         and j.scope='public-reward-challenge'
+                         and c.status='OPEN + FUNDED'
+                         and c.balance_btc>0
+                       order by a.started_at asc"""
+                )
+                assignments=cur.fetchall()
+        for assignment_id,job_id,worker_id in assignments:
+            _start_managed_solver(assignment_id,job_id,worker_id)
+    except Exception:
+        logging.exception("Could not recover managed solvers after startup")
+
+
+@app.on_event("startup")
+def recover_managed_solvers():
+    # Run recovery in a background thread so API startup/health checks are not
+    # blocked by database work or solver initialization.
+    threading.Thread(
+        target=_recover_managed_solvers,
+        name="managed-solver-recovery",
+        daemon=True,
+    ).start()
 
 
 @app.on_event("startup")
