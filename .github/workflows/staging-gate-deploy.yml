@@ -60,14 +60,17 @@ jobs:
       name: production
       url: https://satoshi-hunt-api-production.up.railway.app
     steps:
-      - uses: actions/checkout@v4
-      - name: Deploy API after staging gate
+      - name: Wait for Railway production
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          API: https://satoshi-hunt-api-production.up.railway.app
         run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "::error::RAILWAY_TOKEN is not configured; production deployment cannot be verified."
-            exit 1
-          fi
-          npm install -g @railway/cli
-          railway up --service satoshi-hunt-api --environment production
+          for i in {1..30}; do
+            if curl -fsS "$API/health" >/tmp/health.json; then
+              cat /tmp/health.json
+              echo "Production API is reachable."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Production API did not become reachable after staging passed."
+          exit 1
