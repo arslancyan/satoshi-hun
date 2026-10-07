@@ -1838,7 +1838,7 @@ def economic_capacity(cur, job_id: UUID):
         return {"allowed": False, "reason": "NETWORK_ASSIGNMENT_CAP"}
     cur.execute("select count(*) from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')", (job_id,))
     if cur.fetchone()[0] >= MAX_ACTIVE_ASSIGNMENTS_PER_JOB:
-        return {"allowed": False, "reason": "JOB_ASSIGNMENT_CAP"}
+        return {"allowed": False, "reason": "THIS_PUZZLE_IS_ALREADY_RUNNING"}
     cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where period_start=current_date")
     daily_hours = int(cur.fetchone()[0] or 0) / 3600
     if daily_hours >= MAX_NETWORK_WORKER_HOURS_PER_DAY:
