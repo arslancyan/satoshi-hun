@@ -202,7 +202,8 @@ def sync():
                                    and payout->>'permissionless'='true'
                                    and payout->>'automatic_chain_claim'='true'
                                    and verification->>'execution_mode'='COMPUTE'
-                                   and verification->>'adapter_runnable'='true')
+                                   and verification->>'adapter_runnable'='true'
+                                   and verification->>'adapter_status'='RUNNABLE')
                                  and not exists (
                                    select 1 from jobs where puzzle_id=%s
                                    and scope='public-reward-challenge' and status in ('QUEUED','RUNNING'))""",(cid,cid,cid))
@@ -221,6 +222,7 @@ def sync():
                                  and payout->>'automatic_chain_claim'='true'
                                  and verification->>'execution_mode'='COMPUTE'
                                  and verification->>'adapter_runnable'='true'
+                                   and verification->>'adapter_status'='RUNNABLE'
                                order by expected_value_score desc,balance_btc desc,updated_at desc,id asc limit 1""")
                 replacement = cur.fetchone()
                 if not replacement:
