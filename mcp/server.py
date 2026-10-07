@@ -1,13 +1,11 @@
 import os
 from typing import Any
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 API_URL = os.environ.get("SATOSHI_HUNT_API", "https://satoshi-hunt-api-production.up.railway.app").rstrip("/")
 # Development/testing credential. Production ChatGPT connections should use OAuth 2.1
 # and pass the resulting Satoshi Hunt worker-scoped bearer token to this service.
-MCP_BEARER = os.environ.get("SATOSHI_HUNT_MCP_BEARER", "").strip()
-
 mcp = FastMCP(
     "Satoshi Hunt Worker Control",
     instructions=(
@@ -35,30 +33,31 @@ async def _post(path: str, payload: dict | None = None, token: str | None = None
         r.raise_for_status()
         return r.json()
 
-def _token() -> str:
-    if not MCP_BEARER:
-        raise RuntimeError("MCP worker authorization is not configured")
-    return MCP_BEARER
+def _token(ctx: Context) -> str:
+    auth = (ctx.headers or {}).get("authorization", "")
+    if not auth.startswith("Bearer "):
+        raise RuntimeError("Worker authorization is required")
+    return auth[7:].strip()
 
 @mcp.tool()
-async def satoshi_status() -> dict:
+async def satoshi_status(ctx: Context) -> dict:
     """Show the connected Satoshi Hunt worker account status."""
-    return await _get("/me", _token())
+    return await _get("/me", _token(ctx))
 
 @mcp.tool()
-async def list_live_puzzles() -> dict:
+async def list_live_puzzles(ctx: Context) -> dict:
     """List the live marketplace puzzles and their server-computed queue eligibility."""
-    return await _get("/marketplace/challenges", _token())
+    return await _get("/marketplace/challenges", _token(ctx))
 
 @mcp.tool()
-async def get_puzzle(challenge_id: str) -> dict:
+async def get_puzzle(challenge_id: str, ctx: Context) -> dict:
     """Get one live puzzle's funding, verification and adapter metadata."""
-    return await _get(f"/marketplace/challenges/{challenge_id}", _token())
+    return await _get(f"/marketplace/challenges/{challenge_id}", _token(ctx))
 
 @mcp.tool()
-async def get_worker_status() -> dict:
+async def get_worker_status(ctx: Context) -> dict:
     """Return active workers and their current assignments for the connected account."""
-    token = _token()
+    token = _token(ctx)
     workers = await _get("/workers", token)
     result = []
     for worker in workers:
@@ -67,14 +66,14 @@ async def get_worker_status() -> dict:
     return {"workers": result}
 
 @mcp.tool()
-async def get_worker_jobs() -> list:
+async def get_worker_jobs(ctx: Context) -> list:
     """List jobs visible to the connected Satoshi Hunt account."""
-    return await _get("/jobs", _token())
+    return await _get("/jobs", _token(ctx))
 
 @mcp.tool()
-async def get_telemetry(challenge_id: str) -> dict:
+async def get_telemetry(challenge_id: str, ctx: Context) -> dict:
     """Return marketplace telemetry and adaptive metrics for a puzzle."""
-    puzzle = await get_puzzle(challenge_id)
+    puzzle = await get_puzzle(challenge_id, ctx)
     return {
         "challenge_id": challenge_id,
         "search_metrics": puzzle.get("search_metrics"),
@@ -84,21 +83,21 @@ async def get_telemetry(challenge_id: str) -> dict:
     }
 
 @mcp.tool()
-async def get_reward_status() -> dict:
+async def get_reward_status(ctx: Context) -> dict:
     """Show the connected account's reward balance and withdrawal status."""
-    return await _get("/account/rewards", _token())
+    return await _get("/account/rewards", _token(ctx))
 
 @mcp.tool()
-async def rank_puzzles(limit: int = 20) -> dict:
+async def rank_puzzles(limit: int = 20, ctx: Context = None) -> dict:
     """Return current adaptive ranking, limited to the live marketplace."""
-    data = await list_live_puzzles()
+    data = await list_live_puzzles(ctx)
     rows = data.get("challenges", data.get("offers", []))
     return {"challenges": rows[:max(1, min(limit, 100))]}
 
 @mcp.tool()
-async def check_queue_eligibility(challenge_id: str) -> dict:
+async def check_queue_eligibility(challenge_id: str, ctx: Context) -> dict:
     """Return the server-computed eligibility decision for one puzzle."""
-    puzzle = await get_puzzle(challenge_id)
+    puzzle = await get_puzzle(challenge_id, ctx)
     verification = puzzle.get("verification") or {}
     payout = puzzle.get("payout") or {}
     reasons = []
@@ -114,7 +113,7 @@ async def check_queue_eligibility(challenge_id: str) -> dict:
     return {"challenge_id": challenge_id, "eligible": not reasons, "reasons": reasons}
 
 @mcp.tool()
-async def run_puzzle(challenge_id: str, worker_id: str) -> dict:
+async def run_puzzle(challenge_id: str, worker_id: str, ctx: Context) -> dict:
     """Run an eligible puzzle for the connected worker; server enforces the final gate."""
     data = await list_live_puzzles()
     row = next((x for x in data.get("challenges", []) if x.get("challenge_id") == challenge_id), None)
@@ -122,27 +121,27 @@ async def run_puzzle(challenge_id: str, worker_id: str) -> dict:
         return {"ok": False, "blocked": True, "challenge_id": challenge_id, "reasons": ["challenge_not_live"]}
     if row.get("queue_eligible") is not True:
         return {"ok": False, "blocked": True, "challenge_id": challenge_id, "reasons": ["central_queue_gate_rejected"]}
-    return await _post(f"/marketplace/challenges/{challenge_id}/run", {"worker_id": worker_id}, _token())
+    return await _post(f"/marketplace/challenges/{challenge_id}/run", {"worker_id": worker_id}, _token(ctx))
 
 @mcp.tool()
-async def pause_puzzle(assignment_id: str) -> dict:
+async def pause_puzzle(assignment_id: str, ctx: Context) -> dict:
     """Pause the connected worker's assignment."""
-    return await _post(f"/assignments/{assignment_id}/pause", {}, _token())
+    return await _post(f"/assignments/{assignment_id}/pause", {}, _token(ctx))
 
 @mcp.tool()
-async def stop_puzzle(assignment_id: str) -> dict:
+async def stop_puzzle(assignment_id: str, ctx: Context) -> dict:
     """Stop the connected worker's assignment."""
-    return await _post(f"/assignments/{assignment_id}/stop", {}, _token())
+    return await _post(f"/assignments/{assignment_id}/stop", {}, _token(ctx))
 
 @mcp.tool()
-async def switch_puzzle(challenge_id: str, worker_id: str) -> dict:
+async def switch_puzzle(challenge_id: str, worker_id: str, ctx: Context) -> dict:
     """Atomically switch the connected worker to an eligible puzzle."""
-    return await run_puzzle(challenge_id, worker_id)
+    return await run_puzzle(challenge_id, worker_id, ctx)
 
 @mcp.tool()
-async def restart_worker(worker_id: str) -> dict:
+async def restart_worker(worker_id: str, ctx: Context) -> dict:
     """Request a worker heartbeat/control refresh; never grants new permissions."""
-    return await _post(f"/workers/{worker_id}/heartbeat", {}, _token())
+    return await _post(f"/workers/{worker_id}/heartbeat", {}, _token(ctx))
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
