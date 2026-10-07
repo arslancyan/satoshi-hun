@@ -35,9 +35,13 @@ class AdapterSpec:
     notes: str = ""
 
     @property
+    def audited(self) -> bool:
+        return self.status in {"AUDITED", "RUNNABLE"}
+
+    @property
     def runnable(self) -> bool:
         return (
-            self.status in {"AUDITED", "RUNNABLE"}
+            self.status == "RUNNABLE"
             and self.execution_mode == "COMPUTE"
             and bool(self.solver_entrypoint)
             and bool(self.test_vectors)
@@ -117,6 +121,7 @@ def runtime_contract(challenge_id: str) -> dict[str, Any]:
         "execution_mode": spec.execution_mode,
         "verifier_kind": spec.verifier_kind,
         "adapter_status": spec.status,
+        "adapter_audited": spec.audited,
         "runnable": spec.runnable,
         "target_format": spec.target_format,
         "search_space": spec.search_space,
