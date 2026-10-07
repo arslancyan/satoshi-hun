@@ -1,5 +1,8 @@
 from pathlib import Path
 import os
+import psycopg
+from os import environ
+_db=environ.get("DATABASE_URL","")
 
 p=Path(os.environ.get("SATOSHI_HUNT_API_PATH", "/app/backend/api.py"))
 s=p.read_text()
@@ -154,9 +157,6 @@ if _db:
                             )
 
 # Ensure paused-assignment schema exists on existing production databases.
-import psycopg
-from os import environ
-_db=environ.get("DATABASE_URL","")
 if _db:
     with psycopg.connect(_db) as conn:
         with conn.cursor() as cur:
