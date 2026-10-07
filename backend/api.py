@@ -7,6 +7,7 @@ import json
 import logging
 import secrets
 import time
+import threading
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -46,6 +47,167 @@ TREASURY_WALLET_ID = UUID("00000000-0000-0000-0000-000000000001")
 _redis = redis.from_url(RATE_LIMIT_REDIS_URL, decode_responses=True) if RATE_LIMIT_REDIS_URL else None
 
 app = FastAPI(title="Satoshi Hunt API", version="0.1.1")
+
+# Managed solver state. A RUN from the website starts a real server-side solver
+# for that assignment, so users do not need to install or operate worker.py.
+_MANAGED_SOLVERS = {}
+_MANAGED_SOLVERS_LOCK = threading.Lock()
+
+
+def _managed_hash_digest(algorithm, message):
+    algorithm = str(algorithm).lower()
+    if algorithm == "sha256":
+        return hashlib.sha256(message).digest()
+    if algorithm == "ripemd160":
+        return hashlib.new("ripemd160", message).digest()
+    if algorithm == "hash160":
+        return hashlib.new("ripemd160", hashlib.sha256(message).digest()).digest()
+    if algorithm == "hash256":
+        return hashlib.sha256(hashlib.sha256(message).digest()).digest()
+    raise ValueError("Unsupported collision algorithm")
+
+
+def _stop_managed_solver(assignment_id):
+    with _MANAGED_SOLVERS_LOCK:
+        state = _MANAGED_SOLVERS.get(str(assignment_id))
+        if state:
+            state["stop"].set()
+
+
+def _start_managed_solver(assignment_id, job_id, worker_id):
+    key = str(assignment_id)
+    with _MANAGED_SOLVERS_LOCK:
+        current = _MANAGED_SOLVERS.get(key)
+        if current and current["thread"].is_alive():
+            return
+        stop = threading.Event()
+        state = {"stop": stop}
+        _MANAGED_SOLVERS[key] = state
+
+    def runner():
+        seen = {}
+        cursor = 0
+        last_heartbeat = 0.0
+        last_checkpoint = 0.0
+        started = time.monotonic()
+        try:
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "select c.challenge_type,c.verification,c.status,c.balance_btc "
+                        "from jobs j join challenge_registry c on c.id=j.puzzle_id "
+                        "where j.id=%s",
+                        (job_id,),
+                    )
+                    challenge = cur.fetchone()
+            if not challenge or challenge[2] != "OPEN + FUNDED" or Decimal(str(challenge[3] or 0)) <= 0:
+                return
+            allowed = (challenge[1] or {}).get("allowed_algorithms") or []
+            algorithm = next((str(x).lower() for x in allowed if str(x).lower() in {"sha256","ripemd160","hash160","hash256"}), "")
+            if not algorithm:
+                return
+
+            max_candidates = max(0, int(os.environ.get("SATOSHI_HUNT_MANAGED_MAX_CANDIDATES", "0")))
+            max_memory_mb = max(32, int(os.environ.get("SATOSHI_HUNT_MANAGED_MAX_MEMORY_MB", "128")))
+            max_entries = max(1000, (max_memory_mb * 1024 * 1024) // 96)
+
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "update job_assignments set status='RUNNING',started_at=coalesce(started_at,now()),last_heartbeat_at=now() "
+                        "where id=%s and worker_id=%s and status='ASSIGNED'",
+                        (assignment_id, worker_id),
+                    )
+                    cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'", (job_id,))
+                    record_audit_event(cur, "AUTO_SOLVER_STARTED", "assignment", assignment_id, worker_id=worker_id,
+                                        payload={"job_id":str(job_id),"algorithm":algorithm,"mode":"managed_server_solver"})
+
+            while not stop.is_set():
+                if max_candidates and cursor >= max_candidates:
+                    break
+                message = b"satoshi-hunt:" + cursor.to_bytes(8, "big")
+                digest = _managed_hash_digest(algorithm, message)
+                previous = seen.get(digest)
+                if previous is not None and previous != message:
+                    candidate = f"{algorithm}:{previous.hex()}:{message.hex()}"
+                    with db() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "select id from work_claims where job_id=%s and worker_id=%s and candidate_hash=%s limit 1",
+                                (job_id, worker_id, candidate),
+                            )
+                            if not cur.fetchone():
+                                claim_id = uuid4()
+                                cur.execute(
+                                    "insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) "
+                                    "values(%s,%s,%s,%s,'TESTED',%s,now())",
+                                    (claim_id,job_id,worker_id,candidate,max(0,int(time.monotonic()-started))),
+                                )
+                                result = auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate)
+                                record_audit_event(cur, "AUTO_SOLVER_RESULT", "assignment", assignment_id, worker_id=worker_id,
+                                                    payload={"job_id":str(job_id),"verified":bool(result and result.get("verified"))})
+                    if result and result.get("verified"):
+                        with db() as conn:
+                            with conn.cursor() as cur:
+                                cur.execute(
+                                    "update job_assignments set status='COMPLETED',completed_at=now(),last_heartbeat_at=now() where id=%s",
+                                    (assignment_id,),
+                                )
+                        return
+                seen[digest] = message
+                cursor += 1
+                if len(seen) >= max_entries:
+                    seen.clear()
+                now = time.monotonic()
+                if now - last_heartbeat >= 10:
+                    with db() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "update job_assignments set last_heartbeat_at=now() where id=%s and status='RUNNING'",
+                                (assignment_id,),
+                            )
+                    last_heartbeat = now
+                if now - last_checkpoint >= 30:
+                    with db() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "insert into job_checkpoints(id,assignment_id,cursor_start,cursor_end,cursor_next,nonce) "
+                                "values(%s,%s,0,%s,%s,%s)",
+                                (uuid4(),assignment_id,cursor,cursor,cursor),
+                            )
+                    last_checkpoint = now
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "update job_assignments set status='COMPLETED',completed_at=now(),last_heartbeat_at=null "
+                        "where id=%s and status='RUNNING'",
+                        (assignment_id,),
+                    )
+                    cur.execute(
+                        "update jobs set status='QUEUED' where id=%s and status='RUNNING' "
+                        "and not exists (select 1 from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING'))",
+                        (job_id,job_id),
+                    )
+                    record_audit_event(cur, "AUTO_SOLVER_STOPPED", "assignment", assignment_id, worker_id=worker_id,
+                                        payload={"job_id":str(job_id),"cursor":cursor,"reason":"stop_or_bound"})
+        except Exception as exc:
+            logging.exception("Managed solver failed for assignment %s: %s", assignment_id, type(exc).__name__)
+            try:
+                with db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')", (assignment_id,))
+                        record_audit_event(cur, "AUTO_SOLVER_ERROR", "assignment", assignment_id, worker_id=worker_id,
+                                            payload={"job_id":str(job_id),"error":type(exc).__name__})
+            except Exception:
+                logging.exception("Could not release failed managed solver assignment %s", assignment_id)
+        finally:
+            with _MANAGED_SOLVERS_LOCK:
+                _MANAGED_SOLVERS.pop(key, None)
+
+    thread = threading.Thread(target=runner, name=f"managed-solver-{key[:8]}", daemon=True)
+    state["thread"] = thread
+    thread.start()
+
 
 @app.on_event("startup")
 def validate_treasury_configuration():
@@ -738,6 +900,8 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                                payload={"job_id":str(job_id),"assignment_id":str(aid),"selection":"marketplace"})
             response={"challenge_id":challenge_id,"job_id":str(job_id),"assignment_id":str(aid),"worker_id":str(body.worker_id),"status":"ASSIGNED"}
             idempotency_store(cur,account_id,request,payload,response)
+            # Website RUN now starts the real server-side solver automatically.
+            _start_managed_solver(aid, job_id, body.worker_id)
             return response
 
 
@@ -1687,6 +1851,7 @@ def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = De
             if not row: raise HTTPException(404,"Assignment not found")
             if row[3] not in ("ASSIGNED","RUNNING"):
                 raise HTTPException(409,f"Assignment is {row[3]}")
+            _stop_managed_solver(assignment_id)
             now=datetime.now(timezone.utc)
             cur.execute(
                 "update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
