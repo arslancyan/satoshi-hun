@@ -832,55 +832,130 @@ def pause_challenge(challenge_id: str, request: Request, account_id: UUID = Depe
             return response
 
 def _challenge_search_metrics(cur, challenge_id, verification, challenge_type):
-    """Measured search-space and probability metrics from worker checkpoints."""
+    """Return measured search-space coverage and collision probability.
+
+    Historical checkpoints contribute to cumulative coverage. Only currently
+    RUNNING assignments contribute to the measured throughput used for a
+    forward-looking 24h probability. This keeps the public metric stable when
+    workers pause/stop and prevents historical work from being presented as
+    current compute capacity.
+    """
     verification = verification or {}
     cur.execute(
         """select a.id,a.status,a.started_at,
                   coalesce(cp.cursor_start,0),coalesce(cp.cursor_end,0),
                   coalesce(cp.cursor_next,0)
            from job_assignments a join jobs j on j.id=a.job_id
-           left join lateral (select cursor_start,cursor_end,cursor_next from job_checkpoints
-             where assignment_id=a.id order by created_at desc,id desc limit 1) cp on true
+           left join lateral (select cursor_start,cursor_end,cursor_next
+             from job_checkpoints
+             where assignment_id=a.id
+             order by created_at desc,id desc limit 1) cp on true
            where j.puzzle_id=%s and j.scope='public-reward-challenge'
-             and a.status in ('ASSIGNED','RUNNING')
-           order by a.started_at asc nulls last,a.id asc""",
+           order by a.assigned_at asc,a.id asc""",
         (challenge_id,),
     )
     assignments = cur.fetchall()
-    total_keyspace = 1 << 64
-    searched = 0
+
+    # The hash-collision managed worker searches a deterministic 64-bit
+    # message-counter space in 2^48-stride lanes.
+    default_total = 1 << 64
+    configured_total = verification.get("keyspace_total")
+    try:
+        total_keyspace = int(configured_total) if configured_total is not None else default_total
+    except (TypeError, ValueError):
+        total_keyspace = default_total
+    total_keyspace = max(1, total_keyspace)
+
+    step = 1 << 48
+    searched_intervals = []
     active_rate = 0.0
     active_workers = 0
     now_ts = time.time()
-    step = 1 << 48
-    for _, status, started_at, start, end, cursor in assignments:
+
+    for assignment_id, status, started_at, start, end, cursor in assignments:
         start_i, end_i, cursor_i = int(start), int(end), int(cursor)
-        if end_i <= start_i: continue
+        if end_i <= start_i:
+            continue
+
+        # Convert the checkpoint into a half-open ordinal interval. Merging
+        # intervals prevents resumed/reassigned workers from double-counting
+        # the same lane.
         lane_capacity = max(0, ((end_i - start_i) // step) + 1)
         consumed = max(0, min(lane_capacity, (cursor_i - start_i) // step))
-        searched += consumed
-        if status == 'RUNNING' and started_at:
+        if consumed > 0:
+            searched_intervals.append((start_i, start_i + consumed * step))
+
+        if status == "RUNNING" and started_at and consumed > 0:
             elapsed = max(1.0, now_ts - started_at.timestamp())
             rate = consumed / elapsed
             if rate > 0:
                 active_rate += rate
                 active_workers += 1
-    searched = min(total_keyspace, searched)
+
+    # Merge overlapping lane intervals before calculating cumulative work.
+    searched_intervals.sort()
+    searched = 0
+    current_start = current_end = None
+    for interval_start, interval_end in searched_intervals:
+        if current_start is None:
+            current_start, current_end = interval_start, interval_end
+        elif interval_start <= current_end:
+            current_end = max(current_end, interval_end)
+        else:
+            searched += max(0, (current_end - current_start) // step)
+            current_start, current_end = interval_start, interval_end
+    if current_start is not None:
+        searched += max(0, (current_end - current_start) // step)
+
+    searched = min(total_keyspace, max(0, searched))
     remaining = max(0, total_keyspace - searched)
+    coverage_pct = round((searched / total_keyspace) * 100.0, 12)
+
+    bits_by_algorithm = {
+        "ripemd160": 160,
+        "hash160": 160,
+        "sha256": 256,
+        "hash256": 256,
+    }
+    algorithms = [str(x).lower() for x in (verification.get("allowed_algorithms") or [])]
+    collision_bits = min(
+        (bits_by_algorithm.get(a, 256) for a in algorithms),
+        default=None,
+    )
+
+    probability_observed = None
     probability_24h = None
     probability_basis = None
     probability_model = None
-    if challenge_type == 'hash-collision' and verification.get('execution_mode') == 'COMPUTE':
-        algorithms = [str(x).lower() for x in (verification.get('allowed_algorithms') or [])]
-        bits_by_algorithm = {'ripemd160':160, 'hash160':160, 'sha256':256, 'hash256':256}
-        bits = min((bits_by_algorithm.get(a,256) for a in algorithms), default=256)
-        projected_n = min(float(total_keyspace), float(searched) + active_rate * 86400.0)
-        if projected_n > 1:
-            exponent = -(projected_n * (projected_n - 1.0)) / (2.0 * (2.0 ** bits))
-            probability_24h = max(0.0, min(1.0, 1.0 - math.exp(exponent)))
-        probability_basis = 'Measured checkpoint attempts plus current RUNNING worker rate projected over 24 hours.'
-        probability_model = 'birthday_collision_bound'
-    exhaustion_hours = (remaining / active_rate / 3600.0) if active_rate > 0 else None
+    expected_collision_candidates = None
+
+    if challenge_type == "hash-collision" and collision_bits:
+        # Birthday bound: P(collision after n independent samples).
+        probability_model = "birthday_collision_bound"
+        denominator = 2.0 ** collision_bits
+        if searched > 1:
+            exponent = -(float(searched) * float(searched - 1)) / (2.0 * denominator)
+            probability_observed = max(0.0, min(1.0, 1.0 - math.exp(exponent)))
+
+        # Expected samples to first collision is approximately sqrt(pi/2 * 2^b).
+        expected_collision_candidates = math.sqrt(math.pi / 2.0 * denominator)
+
+        if active_rate > 0:
+            projected_n = min(float(total_keyspace), float(searched) + active_rate * 86400.0)
+            if projected_n > searched:
+                exponent = -(projected_n * (projected_n - 1.0)) / (2.0 * denominator)
+                probability_24h = max(0.0, min(1.0, 1.0 - math.exp(exponent)))
+                probability_basis = (
+                    "Historical unique checkpoint coverage plus measured RUNNING "
+                    "worker rate projected over the next 24 hours."
+                )
+
+    exhaustion_hours = (
+        remaining / active_rate / 3600.0
+        if active_rate > 0
+        else None
+    )
+
     if probability_24h is None:
         difficulty_category = "UNRATED"
     elif probability_24h >= 0.01 or (exhaustion_hours is not None and exhaustion_hours <= 24):
@@ -889,12 +964,26 @@ def _challenge_search_metrics(cur, challenge_id, verification, challenge_type):
         difficulty_category = "HARD"
     else:
         difficulty_category = "EXTREME"
-    return {'keyspace_total': str(total_keyspace), 'keyspace_searched': str(searched),
-            'keyspace_remaining': str(remaining), 'active_workers': active_workers,
-            'attempts_per_second': round(active_rate, 6), 'exhaustion_hours': exhaustion_hours,
-            'probability_24h': probability_24h, 'probability_basis': probability_basis,
-            'probability_model': probability_model, 'difficulty_category': difficulty_category,
-            'measured_at': datetime.now(timezone.utc).isoformat()}
+
+    return {
+        "keyspace_total": str(total_keyspace),
+        "keyspace_searched": str(searched),
+        "keyspace_remaining": str(remaining),
+        "coverage_pct": coverage_pct,
+        "active_workers": active_workers,
+        "attempts_per_second": round(active_rate, 6),
+        "exhaustion_hours": exhaustion_hours,
+        "probability_observed": probability_observed,
+        "probability_24h": probability_24h,
+        "expected_collision_candidates": (
+            str(int(expected_collision_candidates))
+            if expected_collision_candidates is not None else None
+        ),
+        "probability_basis": probability_basis,
+        "probability_model": probability_model,
+        "difficulty_category": difficulty_category,
+        "measured_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 @app.get("/marketplace/challenges")
 def marketplace():
