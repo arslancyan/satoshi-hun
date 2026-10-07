@@ -35,7 +35,7 @@ CHALLENGE_INGESTION_KEY = os.environ.get("CHALLENGE_INGESTION_KEY", "")
 OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "").strip().lower()
 RATE_LIMIT_REDIS_URL = os.environ.get("RATE_LIMIT_REDIS_URL", "")
 MAX_ACTIVE_ASSIGNMENTS = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS", "100")))
-MAX_ACTIVE_ASSIGNMENTS_PER_JOB = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS_PER_JOB", "100")))
+MAX_ACTIVE_ASSIGNMENTS_PER_JOB = max(1, int(os.environ.get("MAX_ACTIVE_ASSIGNMENTS_PER_JOB", "1000")))
 MAX_NETWORK_WORKER_HOURS_PER_DAY = max(1, int(os.environ.get("MAX_NETWORK_WORKER_HOURS_PER_DAY", "10000")))
 PAYOUT_WORKER_TOKEN = os.environ.get("PAYOUT_WORKER_TOKEN", "").strip()
 MAX_SINGLE_PAYOUT_BTC = Decimal(os.environ.get("MAX_SINGLE_PAYOUT_BTC", "0.001"))
@@ -111,6 +111,14 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
             max_memory_mb = max(32, int(os.environ.get("SATOSHI_HUNT_MANAGED_MAX_MEMORY_MB", "128")))
             max_entries = max(1000, (max_memory_mb * 1024 * 1024) // 96)
 
+            # Deterministically partition the 64-bit search space by worker.
+            # Each worker gets a 48-bit lane and advances by 2^48, so multiple
+            # workers on the same puzzle do not all restart at cursor zero.
+            lane_material = f"{job_id}:{worker_id}".encode()
+            lane = int.from_bytes(hashlib.sha256(lane_material).digest()[:6], "big")
+            lane_step = 1 << 48
+            cursor = lane
+            search_end = (1 << 64) - 1
             with db() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -122,8 +130,22 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
                     record_audit_event(cur, "AUTO_SOLVER_STARTED", "assignment", assignment_id, worker_id=worker_id,
                                         payload={"job_id":str(job_id),"algorithm":algorithm,"mode":"managed_server_solver"})
 
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "select cursor_start,cursor_end,cursor_next from job_checkpoints "
+                        "where assignment_id=%s order by created_at desc,id desc limit 1",
+                        (assignment_id,),
+                    )
+                    previous_checkpoint = cur.fetchone()
+            if previous_checkpoint and previous_checkpoint[0] == lane and previous_checkpoint[1] == search_end:
+                cursor = max(lane, int(previous_checkpoint[2]))
+
+            lane_candidates = 0
             while not stop.is_set():
-                if max_candidates and cursor >= max_candidates:
+                if max_candidates and lane_candidates >= max_candidates:
+                    break
+                if cursor >= search_end:
                     break
                 # If an operator/user stop or stale-expiry released the
                 # assignment, terminate the managed solver promptly even if
@@ -164,7 +186,8 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
                                 )
                         return
                 seen[digest] = message
-                cursor += 1
+                cursor += lane_step
+                lane_candidates += 1
                 if len(seen) >= max_entries:
                     seen.clear()
                 now = time.monotonic()
@@ -187,6 +210,21 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
                             )
                     last_heartbeat = now
                 if now - last_checkpoint >= 30:
+                    with db() as conn:
+                        with conn.cursor() as cur:
+                            digest_checkpoint = proof_hash(
+                                job_id, assignment_id, lane, search_end, cursor, str(cursor)
+                            )
+                            cur.execute(
+                                "insert into job_checkpoints(id,job_id,assignment_id,cursor_start,cursor_end,cursor_next,checkpoint_hash) "
+                                "values(%s,%s,%s,%s,%s,%s,%s)",
+                                (uuid4(), job_id, assignment_id, lane, search_end, cursor, digest_checkpoint),
+                            )
+                            cur.execute(
+                                "insert into work_proofs(id,assignment_id,worker_id,proof_type,proof_hash,nonce) "
+                                "values(%s,%s,%s,'CHECKPOINT',%s,%s) on conflict do nothing",
+                                (uuid4(), assignment_id, worker_id, digest_checkpoint, str(cursor)),
+                            )
                     last_checkpoint = now
             with db() as conn:
                 with conn.cursor() as cur:
@@ -1846,9 +1884,9 @@ def economic_capacity(cur, job_id: UUID):
     active_assignments = cur.fetchone()[0]
     if active_assignments >= MAX_ACTIVE_ASSIGNMENTS:
         return {"allowed": False, "reason": "NETWORK_ASSIGNMENT_CAP"}
-    cur.execute("select count(*) from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')", (job_id,))
-    if cur.fetchone()[0] >= MAX_ACTIVE_ASSIGNMENTS_PER_JOB:
-        return {"allowed": False, "reason": "THIS_PUZZLE_IS_ALREADY_RUNNING"}
+    # A single puzzle may be solved by many workers concurrently.
+    # The global network cap remains the safety valve; there is intentionally
+    # no per-puzzle assignment cap.
     cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where period_start=current_date")
     daily_hours = int(cur.fetchone()[0] or 0) / 3600
     if daily_hours >= MAX_NETWORK_WORKER_HOURS_PER_DAY:
