@@ -560,7 +560,8 @@ def marketplace():
             cur.execute(
                 """select id,title,challenge_type,reward_btc,balance_btc,status,provenance,
                           verification,payout,source_adapter,live_checked_at,live_verification,
-                          advertised_reward_btc,verified_balance_btc,funding_match,verification_stale,last_live_check_error
+                          advertised_reward_btc,verified_balance_btc,funding_match,verification_stale,last_live_check_error,
+                          search_metrics,expected_value_score
                    from challenge_registry
                    where status='OPEN + FUNDED'
                      and balance_btc > 0
@@ -573,7 +574,7 @@ def marketplace():
             )
             keys=["challenge_id","title","challenge_type","reward_btc","balance_btc","status",
                   "provenance","verification","payout","source_adapter","live_checked_at","live_verification",
-                  "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error"]
+                  "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error","search_metrics","expected_value_score"]
             rows=[dict(zip(keys,x)) for x in cur.fetchall()]
             for row in rows:
                 row["selected"]=False
