@@ -893,9 +893,11 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
                                payload={"job_id":str(job_id),"assignment_id":str(aid),"selection":"marketplace"})
             response={"challenge_id":challenge_id,"job_id":str(job_id),"assignment_id":str(aid),"worker_id":str(body.worker_id),"status":"ASSIGNED"}
             idempotency_store(cur,account_id,request,payload,response)
-            # Website RUN now starts the real server-side solver automatically.
-            _start_managed_solver(aid, job_id, body.worker_id)
-            return response
+            # Start the managed solver only after this transaction commits.
+            managed_solver_start=(aid,job_id,body.worker_id)
+
+    _start_managed_solver(*managed_solver_start)
+    return response
 
 
 @app.post("/creator/challenges")
