@@ -13,10 +13,10 @@ def test_research_challenge_stays_verified():
     assert result["execution_allowed"] is False
 
 
-def test_runnable_challenge_is_explicitly_allowed():
+def test_public_collision_challenge_stays_research_only():
     result = adapter_readiness("peter-todd-sha256-bounty")
-    assert result["readiness"] == "RUNNABLE"
-    assert result["execution_allowed"] is True
+    assert result["readiness"] == "VERIFIED"
+    assert result["execution_allowed"] is False
 
 
 def test_batch_discovery_preserves_order():
