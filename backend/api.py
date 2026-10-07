@@ -1540,6 +1540,102 @@ def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends
             return response
 
 
+class WithdrawalComplete(BaseModel):
+    external_reference: str = Field(min_length=64, max_length=200)
+
+@app.get("/admin/withdrawals")
+def list_withdrawals(request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("select id,account_id,amount_btc,payout_address,status,external_reference,created_at,processed_at from withdrawal_requests where status in ('QUEUED','PROCESSING') order by created_at asc limit 100")
+            rows=cur.fetchall()
+    return {"withdrawals":[{"id":str(r[0]),"account_id":str(r[1]),"amount_btc":float(r[2]),"payout_address":r[3],"status":r[4],"external_reference":r[5],"created_at":r[6],"processed_at":r[7]} for r in rows]}
+
+@app.post("/admin/withdrawals/{withdrawal_id}/processing")
+def start_withdrawal_processing(withdrawal_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"withdrawal_id":str(withdrawal_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None: return replay
+            require_owner(cur, account_id)
+            cur.execute("update withdrawal_requests set status='PROCESSING',processed_at=now() where id=%s and status='QUEUED' returning account_id,amount_btc,payout_address",(withdrawal_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409,"Withdrawal is not queued")
+            record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",withdrawal_id,account_id,payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),"custody":"none"})
+            response={"withdrawal_id":str(withdrawal_id),"status":"PROCESSING","custody":"non-custodial"}
+            idempotency_store(cur,account_id,request,payload,response)
+            return response
+
+@app.post("/admin/withdrawals/{withdrawal_id}/complete")
+def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"withdrawal_id":str(withdrawal_id),"external_reference":body.external_reference}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None: return replay
+            require_owner(cur,account_id)
+            if not validate_external_txid(body.external_reference): raise HTTPException(422,"Invalid external Bitcoin transaction id")
+            cur.execute("update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() where id=%s and status='PROCESSING' returning account_id,amount_btc",(body.external_reference,withdrawal_id))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409,"Withdrawal is not PROCESSING")
+            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,account_id,payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),"txid_present":True,"custody":"none"})
+            response={"withdrawal_id":str(withdrawal_id),"status":"PAID","external_reference":body.external_reference,"custody":"non-custodial"}
+            idempotency_store(cur,account_id,request,payload,response)
+            return response
+
+def require_payout_worker(request: Request):
+    if not PAYOUT_WORKER_TOKEN: raise HTTPException(503,"Payout worker is not configured")
+    supplied=request.headers.get("X-Payout-Worker-Token","").strip()
+    if not supplied or not secrets.compare_digest(supplied,PAYOUT_WORKER_TOKEN): raise HTTPException(401,"Payout worker authorization required")
+
+@app.post("/internal/payouts/next")
+def payout_next(request: Request):
+    enforce_rate_limit(request,"write")
+    require_payout_worker(request)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select coalesce(sum(amount_btc),0) from withdrawal_requests where status='PAID' and processed_at >= current_date")
+            paid_today=Decimal(str(cur.fetchone()[0] or 0))
+            if paid_today >= MAX_DAILY_PAYOUT_BTC: return {"withdrawal":None,"reason":"daily_payout_limit"}
+            cur.execute("""select id,account_id,amount_btc,payout_address from withdrawal_requests
+                           where status='QUEUED' or (status='PROCESSING' and processed_at < now() - (%s || ' minutes')::interval)
+                           order by created_at asc limit 1 for update skip locked""",(PAYOUT_RETRY_AFTER_MINUTES,))
+            row=cur.fetchone()
+            if not row: return {"withdrawal":None}
+            wid,account_id,amount,address=row
+            amount=Decimal(str(amount))
+            if amount > MAX_SINGLE_PAYOUT_BTC:
+                cur.execute("update withdrawal_requests set status='FAILED',processed_at=now() where id=%s and status in ('QUEUED','PROCESSING')",(wid,))
+                record_audit_event(cur,"WITHDRAWAL_FAILED","withdrawal",wid,None,payload={"reason":"single_payout_limit","amount_btc":str(amount)})
+                return {"withdrawal":None,"reason":"single_payout_limit"}
+            cur.execute("update withdrawal_requests set status='PROCESSING',processed_at=now() where id=%s and status in ('QUEUED','PROCESSING') returning id",(wid,))
+            if cur.rowcount != 1: return {"withdrawal":None}
+            record_audit_event(cur,"WITHDRAWAL_WORKER_CLAIMED","withdrawal",wid,None,payload={"amount_btc":str(amount),"custody":"none"})
+            return {"withdrawal":{"id":str(wid),"account_id":str(account_id),"amount_btc":float(amount),"payout_address":address,"status":"PROCESSING","idempotency_key":"withdrawal:"+str(wid)}}
+
+@app.post("/internal/payouts/{withdrawal_id}/complete")
+def payout_complete(withdrawal_id: UUID, body: WithdrawalComplete, request: Request):
+    enforce_rate_limit(request,"write")
+    require_payout_worker(request)
+    if not validate_external_txid(body.external_reference): raise HTTPException(422,"Invalid external Bitcoin transaction id")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() where id=%s and status='PROCESSING' returning account_id,amount_btc",(body.external_reference,withdrawal_id))
+            row=cur.fetchone()
+            if not row:
+                cur.execute("select status,external_reference from withdrawal_requests where id=%s",(withdrawal_id,))
+                current=cur.fetchone()
+                if current and current[0]=='PAID' and current[1]==body.external_reference:
+                    return {"withdrawal_id":str(withdrawal_id),"status":"PAID","external_reference":body.external_reference}
+                raise HTTPException(409,"Withdrawal is not PROCESSING")
+            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,None,payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),"txid_present":True,"custody":"none"})
+            return {"withdrawal_id":str(withdrawal_id),"status":"PAID","external_reference":body.external_reference,"custody":"non-custodial"}
+
 class PayoutAddressUpdate(BaseModel):
     btc_payout_address: str = Field(min_length=14, max_length=128)
 
