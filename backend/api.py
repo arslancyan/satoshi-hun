@@ -125,6 +125,15 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
             while not stop.is_set():
                 if max_candidates and cursor >= max_candidates:
                     break
+                # If an operator/user stop or stale-expiry released the
+                # assignment, terminate the managed solver promptly even if
+                # the stop event was not observed in the same process.
+                with db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("select status from job_assignments where id=%s", (assignment_id,))
+                        current_assignment = cur.fetchone()
+                if not current_assignment or current_assignment[0] != "RUNNING":
+                    break
                 message = b"satoshi-hunt:" + cursor.to_bytes(8, "big")
                 digest = _managed_hash_digest(algorithm, message)
                 previous = seen.get(digest)
@@ -1833,6 +1842,10 @@ def expire_stale_assignments(cur):
         (cutoff,),
     )
     for assignment_id,job_id,worker_id in cur.fetchall():
+        # A managed solver can outlive the HTTP request that started it. Stop
+        # that process too when the database assignment expires, otherwise the
+        # UI may show EXPIRED while the server keeps consuming CPU.
+        _stop_managed_solver(assignment_id)
         cur.execute(
             """update jobs set status='QUEUED',completed_at=null
                where id=%s and status in ('RUNNING','QUEUED')
@@ -1896,10 +1909,13 @@ def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = De
     payload={"assignment_id":str(assignment_id)}
     with db() as conn:
         with conn.cursor() as cur:
-            expire_stale_assignments(cur)
+            # Do not run expire_stale_assignments() here. A stale assignment is
+            # still explicitly stoppable by its owner. The old ordering expired
+            # it first, returned "Assignment is EXPIRED", and never signalled the
+            # managed solver, which could keep running in the background.
             row=assignment_for_account(cur,assignment_id,account_id)
             if not row: raise HTTPException(404,"Assignment not found")
-            if row[3] not in ("ASSIGNED","RUNNING"):
+            if row[3] not in ("ASSIGNED","RUNNING","EXPIRED"):
                 raise HTTPException(409,f"Assignment is {row[3]}")
             _stop_managed_solver(assignment_id)
             now=datetime.now(timezone.utc)
