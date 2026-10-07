@@ -12,6 +12,7 @@ def record(id, probability, reward, workers=0, action_ready=True):
             "funding_match": True,
             "execution_mode": "COMPUTE" if action_ready else "RESEARCH",
             "adapter_runnable": action_ready,
+            "adapter_audited": action_ready,
         },
         "search_metrics": {
             "probability_24h": probability,
