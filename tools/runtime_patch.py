@@ -125,6 +125,29 @@ def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = De
 p.write_text(s)
 
 
+# Live challenge registry compatibility migrations. Older Railway databases may
+# predate the search/ranking columns now required by the marketplace.
+if _db:
+    with psycopg.connect(_db) as conn:
+        with conn.cursor() as cur:
+            cur.execute("alter table challenge_registry add column if not exists payout jsonb not null default '{}'::jsonb")
+            cur.execute("alter table challenge_registry add column if not exists source_adapter text")
+            cur.execute("alter table challenge_registry add column if not exists live_checked_at timestamptz")
+            cur.execute("alter table challenge_registry add column if not exists live_verification jsonb not null default '{}'::jsonb")
+            cur.execute("alter table challenge_registry add column if not exists advertised_reward_btc numeric(20,8)")
+            cur.execute("alter table challenge_registry add column if not exists verified_balance_btc numeric(20,8)")
+            cur.execute("alter table challenge_registry add column if not exists funding_match boolean not null default false")
+            cur.execute("alter table challenge_registry add column if not exists verification_stale boolean not null default true")
+            cur.execute("alter table challenge_registry add column if not exists last_live_check_error text")
+            cur.execute("alter table challenge_registry add column if not exists funding_snapshot jsonb not null default '{}'::jsonb")
+            cur.execute("alter table challenge_registry add column if not exists solve_evidence jsonb not null default '{}'::jsonb")
+            cur.execute("alter table challenge_registry add column if not exists search_metrics jsonb not null default '{}'::jsonb")
+            cur.execute("alter table challenge_registry add column if not exists expected_value_score numeric(30,12) not null default 0")
+            cur.execute("create table if not exists challenge_metric_snapshots (id uuid primary key, challenge_id text not null references challenge_registry(id) on delete cascade, metrics jsonb not null, captured_at timestamptz not null default now())")
+            cur.execute("create index if not exists idx_challenge_metric_snapshots_challenge on challenge_metric_snapshots(challenge_id,captured_at desc)")
+            cur.execute("create index if not exists idx_challenge_registry_expected_value on challenge_registry(expected_value_score desc, updated_at desc)")
+            cur.execute("create index if not exists idx_challenge_registry_search_metrics on challenge_registry using gin(search_metrics)")
+
 # Audit-chain ordering migration. PostgreSQL now() is transaction-scoped, so timestamp/id
 # ordering is not a safe append order when several audit events are emitted in
 # one transaction. Persist a monotonic sequence and repair legacy rows by their
