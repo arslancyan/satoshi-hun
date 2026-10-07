@@ -17,6 +17,6 @@ s,d=call("/auth/login","POST",{"email":email,"password":password})
 if s!=200: raise SystemExit(f"owner login failed: {s} {d}")
 s,d=call("/admin/withdrawals",token=d["session"])
 if s!=200: raise SystemExit(f"admin withdrawals failed: {s} {d}")
-matches=[x for x in d.get("withdrawals",[]) if x.get("external_reference","").startswith(prefix) and x.get("status")=="PAID"]
+matches=[x for x in d.get("withdrawals",[]) if str(x.get("external_reference") or "").startswith(prefix) and x.get("status")=="PAID"]
 if not matches: raise SystemExit("no staging payout reached PAID with mock external reference")
 print("STAGING_PAYOUT=PASS",json.dumps({"paid_count":len(matches)}))
