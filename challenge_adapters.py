@@ -51,6 +51,16 @@ class AdapterSpec:
 # Only adapters with a deterministic, independently testable compute path may
 # enter RUNNABLE. Research puzzles can be VERIFIED without becoming runnable.
 ADAPTERS: dict[str, AdapterSpec] = {
+    "base-leading-zero-canary": AdapterSpec(
+        "base-leading-zero-canary", "bounded-leading-zero-v1", "COMPUTE",
+        "leading-zero-proof", "RUNNABLE", "finite nonce range",
+        "0..max_nonce declared by challenge",
+        "challenge_adapters.bounded_leading_zero:solve",
+        (
+            {"challenge": "satoshi-hunt-test", "difficulty_bits": 8, "max_nonce": 100000},
+        ),
+        "Only eligible when a public reward registry record explicitly binds this adapter to a funded, permissionless, deterministic verifier. The adapter itself does not claim or settle funds.",
+    ),
     "peter-todd-sha256-bounty": AdapterSpec(
         "peter-todd-sha256-bounty", "hash-collision-v1", "RESEARCH",
         "hash-collision", "VERIFIED", "unbounded full-width collision domain",
