@@ -1507,7 +1507,7 @@ def void_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(ac
             if replay is not None:
                 return replay
             require_owner(cur, account_id)
-            cur.execute("update reward_events set settlement_status='VOID' where id=%s and settlement_status in ('REVIEW','APPROVED') returning puzzle_id", (reward_id,))
+            cur.execute("update reward_events set settlement_status='VOID' where id=%s and settlement_status='REVIEW' returning puzzle_id", (reward_id,))
             row=cur.fetchone()
             if not row: raise HTTPException(409, "Reward cannot be voided from its current state")
             record_audit_event(cur,"REWARD_VOID","reward_event",reward_id,account_id,payload={"puzzle_id":row[0]})
@@ -2115,7 +2115,7 @@ def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: 
             require_owner(cur, account_id)
             cur.execute(
                 "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
-                "where id=%s and status in ('QUEUED','PROCESSING') returning account_id,amount_btc",
+                "where id=%s and status='PROCESSING' returning account_id,amount_btc",
                 (body.external_reference.strip(),withdrawal_id),
             )
             row=cur.fetchone()
@@ -2153,6 +2153,13 @@ def payout_worker_next(request: Request):
                 record_audit_event(cur,"WITHDRAWAL_BLOCKED","withdrawal",wid,account_id,
                     payload={"reason":"MAX_SINGLE_PAYOUT_BTC","amount_btc":str(amount),"limit_btc":str(MAX_SINGLE_PAYOUT_BTC)})
                 cur.execute("update withdrawal_requests set status='FAILED',processed_at=now() where id=%s and status in ('QUEUED','PROCESSING')",(wid,))
+                cur.execute(
+                    "insert into reward_balances(account_id,available_btc,updated_at) values(%s,%s,now()) "
+                    "on conflict(account_id) do update set available_btc=reward_balances.available_btc+excluded.available_btc,updated_at=now()",
+                    (account_id, amount),
+                )
+                record_audit_event(cur,"WITHDRAWAL_REFUNDED","withdrawal",wid,account_id,
+                    payload={"reason":"MAX_SINGLE_PAYOUT_BTC","amount_btc":str(amount),"custody":"none"})
                 return {"withdrawal":None,"blocked":"MAX_SINGLE_PAYOUT_BTC","withdrawal_id":str(wid)}
             cur.execute(
                 "select coalesce(sum(amount_btc),0) from withdrawal_requests "
