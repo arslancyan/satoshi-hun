@@ -880,10 +880,20 @@ def _challenge_search_metrics(cur, challenge_id, verification, challenge_type):
             probability_24h = max(0.0, min(1.0, 1.0 - math.exp(exponent)))
         probability_basis = 'Measured checkpoint attempts plus current RUNNING worker rate projected over 24 hours.'
         probability_model = 'birthday_collision_bound'
+    exhaustion_hours = (remaining / active_rate / 3600.0) if active_rate > 0 else None
+    if probability_24h is None:
+        difficulty_category = "UNRATED"
+    elif probability_24h >= 0.01 or (exhaustion_hours is not None and exhaustion_hours <= 24):
+        difficulty_category = "QUICK"
+    elif probability_24h >= 0.000001 or (exhaustion_hours is not None and exhaustion_hours <= 168):
+        difficulty_category = "HARD"
+    else:
+        difficulty_category = "EXTREME"
     return {'keyspace_total': str(total_keyspace), 'keyspace_searched': str(searched),
             'keyspace_remaining': str(remaining), 'active_workers': active_workers,
-            'attempts_per_second': round(active_rate, 6), 'probability_24h': probability_24h,
-            'probability_basis': probability_basis, 'probability_model': probability_model,
+            'attempts_per_second': round(active_rate, 6), 'exhaustion_hours': exhaustion_hours,
+            'probability_24h': probability_24h, 'probability_basis': probability_basis,
+            'probability_model': probability_model, 'difficulty_category': difficulty_category,
             'measured_at': datetime.now(timezone.utc).isoformat()}
 
 @app.get("/marketplace/challenges")
