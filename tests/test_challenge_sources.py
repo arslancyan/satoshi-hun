@@ -36,3 +36,16 @@ def test_live_record_exports_search_metrics():
         {"keyspace_total": "1024", "keyspace_remaining": "1024", "difficulty_category": "EXTREME"},
     )
     assert record.as_registry()["search_metrics"]["keyspace_total"] == "1024"
+
+
+def test_live_sync_uses_runtime_discovery_readiness():
+    from challenge_sources import adapter_readiness
+    runnable = adapter_readiness("peter-todd-sha256-bounty")
+    research = adapter_readiness("keir-finlow-bates-blockchain-book-600ksats")
+    unknown = adapter_readiness("future-source-puzzle")
+    assert runnable["readiness"] == "RUNNABLE"
+    assert runnable["execution_allowed"] is True
+    assert research["readiness"] == "VERIFIED"
+    assert research["execution_allowed"] is False
+    assert unknown["readiness"] == "DISCOVERED"
+    assert unknown["execution_allowed"] is False
