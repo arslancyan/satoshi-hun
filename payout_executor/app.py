@@ -4,6 +4,9 @@ import json
 import os
 import sqlite3
 import time
+import subprocess
+import sys
+import threading
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -25,6 +28,35 @@ RPC_WALLET = os.environ.get("BITCOIN_RPC_WALLET", "").strip()
 RPC_TIMEOUT = float(os.environ.get("BITCOIN_RPC_TIMEOUT_SECONDS", "30"))
 
 app = FastAPI(title="Satoshi Hunt Payout Executor", version=APP_VERSION)
+
+PAYOUT_WORKER_ENABLED = os.environ.get("PAYOUT_WORKER_ENABLED", "false").strip().lower() == "true"
+PAYOUT_WORKER_STARTED = False
+
+def _start_payout_worker():
+    global PAYOUT_WORKER_STARTED
+    if PAYOUT_WORKER_STARTED or not PAYOUT_WORKER_ENABLED or not ENABLED:
+        return
+    if not os.environ.get("SATOSHI_HUNT_API", "").strip() or not os.environ.get("PAYOUT_WORKER_TOKEN", "").strip():
+        return
+    if not os.environ.get("PAYOUT_EXECUTOR_TOKEN", "").strip():
+        return
+    worker = Path(__file__).resolve().parents[1] / "tools" / "payout_worker.py"
+    if not worker.exists():
+        return
+    PAYOUT_WORKER_STARTED = True
+    def runner():
+        while True:
+            try:
+                subprocess.run([sys.executable, str(worker)], check=False)
+            except Exception:
+                time.sleep(10)
+            else:
+                time.sleep(5)
+    threading.Thread(target=runner, name="payout-worker", daemon=True).start()
+
+@app.on_event("startup")
+def startup_payout_worker():
+    _start_payout_worker()
 
 BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 BECH32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
