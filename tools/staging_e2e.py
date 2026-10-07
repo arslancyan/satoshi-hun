@@ -62,7 +62,7 @@ audit_verify=ok("audit chain",*call("/audit/job/"+job+"/verify"))
 if audit_verify["valid"] is not True: raise SystemExit(1)
 
 rewards=ok("reward",*call("/account/rewards",auth=session))
-if rewards["available_btc"] != 0: raise SystemExit(1)
+if rewards["available_btc"] not in ("0", "0.00000000"): raise SystemExit(1)
 if not rewards["withdrawals"] or rewards["withdrawals"][0]["status"]!="QUEUED": raise SystemExit(1)
 
 account_audit=ok("account audit",*call("/audit/account",auth=session))
