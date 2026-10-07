@@ -42,13 +42,16 @@ jobs:
         run: python -m pip install -r backend/requirements.txt
 
       - name: Compile backend
-        run: python -m py_compile backend/api.py backend/../audit.py backend/../protocol.py backend/../verifier.py challenge_adapters.py challenge_adapter_audit.py registry.py worker.py
+        run: python -m py_compile backend/api.py backend/../audit.py backend/../protocol.py backend/../verifier.py challenge_adapters.py challenge_adapter_audit.py challenge_discovery.py registry.py worker.py
 
       - name: Audit challenge registry
         run: python audit.py puzzles.json
 
       - name: Audit challenge adapters
         run: python challenge_adapter_audit.py puzzles.json
+
+      - name: Audit challenge discovery module
+        run: python -m py_compile challenge_discovery.py
 
       - name: Install test dependency
         run: python -m pip install pytest
