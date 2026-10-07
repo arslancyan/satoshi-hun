@@ -1,10 +1,12 @@
 # Real public challenge staging
 
-Satoshi Hunt is wired to one live, public, funded challenge family:
+Satoshi Hunt currently discovers and verifies one live, public, funded challenge family:
 
 - Peter Todd Hash Collision Bounties
-- Four live Bitcoin P2SH escrows
-- Registry snapshot: 0.59364885 BTC across the four escrows
+- Four Bitcoin P2SH escrows are tracked by the source adapter
+- The source adapter independently checks the published reward/funding state
+
+The four Peter Todd records are **VERIFIED / RESEARCH**, not worker-runnable. They are intentionally blocked from the public worker queue because the published collision domain is unbounded and no bounded, independently audited compute solver is approved yet. Funding can be rechecked by live sync immediately before any future production enablement.
 - Verification input: two distinct byte strings plus one published hash function
 - No private keys, seed phrases, or wallet credentials are accepted
 
