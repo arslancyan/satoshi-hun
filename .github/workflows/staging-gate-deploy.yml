@@ -63,12 +63,18 @@ jobs:
       - name: Wait for Railway production
         env:
           API: https://satoshi-hunt-api-production.up.railway.app
+          EXPECTED_COMMIT: ${{ github.sha }}
         run: |
           for i in {1..30}; do
             if curl -fsS "$API/health" >/tmp/health.json; then
               cat /tmp/health.json
-              echo "Production API is reachable."
-              exit 0
+              ACTUAL_COMMIT=$(python3 -c 'import json; print(json.load(open("/tmp/health.json")).get("commit",""))')
+              if [ "$ACTUAL_COMMIT" = "$EXPECTED_COMMIT" ]; then
+                echo "Production API is serving the expected commit."
+                exit 0
+              fi
+              echo "Production is healthy but still serving $ACTUAL_COMMIT; waiting for $EXPECTED_COMMIT."
+            fi
             fi
             sleep 10
           done
