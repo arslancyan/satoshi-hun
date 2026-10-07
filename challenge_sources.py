@@ -369,7 +369,9 @@ class OpenCryptoPuzzlesAdapter:
                     live_sats = int(live_item.get("live_balance_sats") or 0)
                     per_funding_match = expected > 0 and live_sats >= expected
                     per_balance_btc = live_sats / 100_000_000
-                    adapter = get_adapter(stable_id)\n                    adapter_contract = runtime_contract(stable_id)\n                    per_verification = {
+                    adapter = get_adapter(stable_id)
+                    adapter_contract = runtime_contract(stable_id)
+                    per_verification = {
                         **verification,
                         "fingerprint": stable_id,
                         "allowed_algorithms": [algorithm],
@@ -379,7 +381,10 @@ class OpenCryptoPuzzlesAdapter:
                         "verified_balance_btc": per_balance_btc,
                         "funding_match": per_funding_match,
                         "escrow_spend_is_authoritative": True,
-                        "execution_mode": adapter_contract["execution_mode"] if adapter_contract["adapter_registered"] else "RESEARCH",\n                        "adapter_id": adapter_contract.get("adapter_id"),\n                        "adapter_status": adapter_contract.get("adapter_status"),\n                        "adapter_runnable": adapter_contract.get("runnable", False),
+                        "execution_mode": adapter_contract["execution_mode"] if adapter_contract["adapter_registered"] else "RESEARCH",
+                        "adapter_id": adapter_contract.get("adapter_id"),
+                        "adapter_status": adapter_contract.get("adapter_status"),
+                        "adapter_runnable": adapter_contract.get("runnable", False),
                         "difficulty_left": "research-breakthrough",
                         "difficulty_note": "Hash-collision bounty; generic full-width collision search is computationally infeasible.",
                     }
@@ -406,6 +411,12 @@ class OpenCryptoPuzzlesAdapter:
                         )
                     )
             else:
+                adapter = get_adapter(str(puzzle["slug"]))
+                adapter_contract = runtime_contract(str(puzzle["slug"]))
+                verification["execution_mode"] = adapter_contract["execution_mode"]
+                verification["adapter_id"] = adapter_contract.get("adapter_id")
+                verification["adapter_status"] = adapter_contract.get("adapter_status")
+                verification["adapter_runnable"] = adapter_contract.get("runnable", False)
                 out.append(
                     LiveSourceRecord(
                         ID_ALIASES.get(str(puzzle["slug"]), str(puzzle["slug"])),
