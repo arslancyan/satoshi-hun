@@ -1,5 +1,5 @@
 import os
-import hashlib
+import hashlib, math
 import base64
 import hmac
 import re
@@ -831,6 +831,61 @@ def pause_challenge(challenge_id: str, request: Request, account_id: UUID = Depe
             idempotency_store(cur, account_id, request, payload, response)
             return response
 
+def _challenge_search_metrics(cur, challenge_id, verification, challenge_type):
+    """Measured search-space and probability metrics from worker checkpoints."""
+    verification = verification or {}
+    cur.execute(
+        """select a.id,a.status,a.started_at,
+                  coalesce(cp.cursor_start,0),coalesce(cp.cursor_end,0),
+                  coalesce(cp.cursor_next,0)
+           from job_assignments a join jobs j on j.id=a.job_id
+           left join lateral (select cursor_start,cursor_end,cursor_next from job_checkpoints
+             where assignment_id=a.id order by created_at desc,id desc limit 1) cp on true
+           where j.puzzle_id=%s and j.scope='public-reward-challenge'
+             and a.status in ('ASSIGNED','RUNNING')
+           order by a.started_at asc nulls last,a.id asc""",
+        (challenge_id,),
+    )
+    assignments = cur.fetchall()
+    total_keyspace = 1 << 64
+    searched = 0
+    active_rate = 0.0
+    active_workers = 0
+    now_ts = time.time()
+    step = 1 << 48
+    for _, status, started_at, start, end, cursor in assignments:
+        start_i, end_i, cursor_i = int(start), int(end), int(cursor)
+        if end_i <= start_i: continue
+        lane_capacity = max(0, ((end_i - start_i) // step) + 1)
+        consumed = max(0, min(lane_capacity, (cursor_i - start_i) // step))
+        searched += consumed
+        if status == 'RUNNING' and started_at:
+            elapsed = max(1.0, now_ts - started_at.timestamp())
+            rate = consumed / elapsed
+            if rate > 0:
+                active_rate += rate
+                active_workers += 1
+    searched = min(total_keyspace, searched)
+    remaining = max(0, total_keyspace - searched)
+    probability_24h = None
+    probability_basis = None
+    probability_model = None
+    if challenge_type == 'hash-collision' and verification.get('execution_mode') == 'COMPUTE':
+        algorithms = [str(x).lower() for x in (verification.get('allowed_algorithms') or [])]
+        bits_by_algorithm = {'ripemd160':160, 'hash160':160, 'sha256':256, 'hash256':256}
+        bits = min((bits_by_algorithm.get(a,256) for a in algorithms), default=256)
+        projected_n = min(float(total_keyspace), float(searched) + active_rate * 86400.0)
+        if projected_n > 1:
+            exponent = -(projected_n * (projected_n - 1.0)) / (2.0 * (2.0 ** bits))
+            probability_24h = max(0.0, min(1.0, 1.0 - math.exp(exponent)))
+        probability_basis = 'Measured checkpoint attempts plus current RUNNING worker rate projected over 24 hours.'
+        probability_model = 'birthday_collision_bound'
+    return {'keyspace_total': str(total_keyspace), 'keyspace_searched': str(searched),
+            'keyspace_remaining': str(remaining), 'active_workers': active_workers,
+            'attempts_per_second': round(active_rate, 6), 'probability_24h': probability_24h,
+            'probability_basis': probability_basis, 'probability_model': probability_model,
+            'measured_at': datetime.now(timezone.utc).isoformat()}
+
 @app.get("/marketplace/challenges")
 def marketplace():
     """Public read-only marketplace feed; starting work still requires authentication."""
@@ -856,6 +911,7 @@ def marketplace():
             rows=[dict(zip(keys,x)) for x in cur.fetchall()]
             for row in rows:
                 row["selected"]=False
+                row["search_metrics"]=_challenge_search_metrics(cur,row["challenge_id"],row.get("verification"),row["challenge_type"])
             return {"challenges":rows,"offers":rows}
 
 
@@ -877,7 +933,10 @@ def marketplace_detail(challenge_id: str, account_id: UUID = Depends(account_id_
                   "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error"]
             cur.execute("select 1 from challenge_selections where account_id=%s and challenge_id=%s",(account_id,challenge_id))
             selected=cur.fetchone() is not None
-            return {**dict(zip(keys,row)),"selected":selected}
+            payload=dict(zip(keys,row))
+            payload["selected"]=selected
+            payload["search_metrics"]=_challenge_search_metrics(cur,challenge_id,payload.get("verification"),payload["challenge_type"])
+            return payload
 
 
 @app.post("/marketplace/challenges/{challenge_id}/run")
