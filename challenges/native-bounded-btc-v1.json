@@ -1,0 +1,34 @@
+{
+  "id": "satoshi-hunt-native-btc-v1",
+  "title": "Satoshi Hunt Native — Bounded BTC Challenge v1",
+  "chain": "bitcoin",
+  "asset": "BTC",
+  "reward_sats": 10000,
+  "execution_mode": "COMPUTE",
+  "adapter_id": "native-bounded-btc-v1",
+  "verifier": {
+    "kind": "sha256-leading-zero-proof",
+    "difficulty_bits": 20,
+    "max_nonce": 1048575,
+    "deterministic": true
+  },
+  "qualification": {
+    "provenance_verified": true,
+    "funding_verified": false,
+    "permissionless_payout": true,
+    "deterministic_verifier": true,
+    "bounded_search_space": true,
+    "test_vectors_present": true,
+    "audited_adapter": true,
+    "private_key_search": false,
+    "seed_phrase_search": false,
+    "generic_unbounded_bruteforce": false
+  },
+  "funding": {
+    "required_sats": 10000,
+    "escrow_address": null,
+    "funding_txid": null,
+    "status": "AWAITING_DEDICATED_ESCROW"
+  },
+  "public_status": "PREPARED_NOT_FUNDED"
+}
