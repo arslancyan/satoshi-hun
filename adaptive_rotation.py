@@ -53,12 +53,12 @@ def opportunity_score(record: dict[str, Any]) -> float:
     # low-probability bounty cannot crowd out a measurable opportunity.
     reward_signal = min(1.0, reward / 10.0)
     score = (
-        probability * 0.40
-        + reward_signal * 0.15
-        + reliability * 0.15
-        + funding * 0.12
+        probability * 0.55
+        + reward_signal * 0.08
+        + reliability * 0.12
+        + funding * 0.10
         + freshness * 0.08
-        + competition * 0.10
+        + competition * 0.07
     )
     return round(score, 12)
 
