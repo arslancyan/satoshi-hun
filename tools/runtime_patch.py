@@ -54,6 +54,17 @@ new2='''    cur.execute(
 if old2 not in s:
     raise SystemExit("reward patch target not found")
 s=s.replace(old2,new2,1)
+# Serialize concurrent marketplace puzzle switches per account.
+_run_marker='@app.post("/marketplace/challenges/{challenge_id}/run")'
+if _run_marker in s:
+    _run_start=s.index(_run_marker)
+    _run_tail=s[_run_start:]
+    _run_needle='            replay=idempotency_replay(cur,account_id,request,payload)\\n            if replay is not None: return replay'
+    _run_insert=_run_needle+'\\n            cur.execute("select pg_advisory_xact_lock(hashtext(%s))",(str(account_id),))\\n            # One active puzzle per account: serialize concurrent switches.'
+    if _run_needle in _run_tail and "pg_advisory_xact_lock(hashtext(%s))" not in _run_tail:
+        _run_tail=_run_tail.replace(_run_needle,_run_insert,1)
+        s=s[:_run_start]+_run_tail
+
 p.write_text(s)
 
 
