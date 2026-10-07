@@ -88,6 +88,22 @@ ADAPTERS: dict[str, AdapterSpec] = {
     # These are deliberately VERIFIED/RESEARCH: their published derivations
     # are reproducible, but solving requires external information or an
     # unbounded/unspecified corpus rather than a safe generic compute job.
+    "aoi-nakamoto-quizchain-0-854btc": AdapterSpec(
+        "aoi-nakamoto-quizchain-0-854btc", "md5-bip39-bip44-v1",
+        "RESEARCH", "md5-to-bip39-p2pkh", "VERIFIED",
+        "author source-text serialization is not bounded",
+        None, None,
+        ({"oracle": "published-md5-to-bip39-calibration", "derivation": "m/44'/0'/0'/0/i", "indices": [0,1,2,3,4,5]},),
+        "Real Big Block is a funded public 0.777 BTC escrow, but the exact source bytes/twist are unresolved. Do not run generic brute force or claim a bounded solver.",
+    ),
+    "genesis-block-wallet-puzzle-142ksats": AdapterSpec(
+        "genesis-block-wallet-puzzle-142ksats", "genesis-p2wsh-bip48-v1",
+        "RESEARCH", "p2wsh-2of2-derivation", "VERIFIED",
+        "passphrase/candidate interpretation is not bounded",
+        None, None,
+        ({"oracle": "certified-p2wsh-2of2", "witness_program": "4dae67a9872f1402109f9670276afc2c0758f895aafddcd089795771b796483"},),
+        "Funded public P2WSH challenge with a certified offline oracle, but the remaining passphrase/source interpretation is not a bounded public compute domain.",
+    ),
     "corey-phillips-kitten-passphrase-1msats": AdapterSpec(
         "corey-phillips-kitten-passphrase-1msats", "bip39-passphrase-v1",
         "RESEARCH", "bip39-passphrase", "VERIFIED",
