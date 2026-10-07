@@ -1356,7 +1356,15 @@ def worker_heartbeat(worker_id: UUID, request: Request, token_worker_id: UUID = 
 def list_jobs(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("select j.id,j.puzzle_id,j.status,j.created_at,j.completed_at,a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,a.last_heartbeat_at,a.verified_seconds from jobs j left join job_assignments a on a.job_id=j.id and a.status in ('ASSIGNED','RUNNING') where j.scope='public-reward-challenge' order by j.created_at desc limit 50")
+            cur.execute("""select j.id,j.puzzle_id,j.status,j.created_at,j.completed_at,
+                                      a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,
+                                      a.last_heartbeat_at,a.verified_seconds
+                               from jobs j
+                               join job_assignments a on a.job_id=j.id
+                               join workers w on w.id=a.worker_id
+                               where j.scope='public-reward-challenge' and w.account_id=%s
+                                 and a.status in ('ASSIGNED','RUNNING')
+                               order by j.created_at desc limit 50""",(account_id,))
             rows = cur.fetchall()
     return [{"id":str(r[0]),"puzzle_id":r[1],"status":r[2],"created_at":r[3],"completed_at":r[4],"assignment":None if r[5] is None else {"id":str(r[5]),"worker_id":str(r[6]),"status":r[7],"assigned_at":r[8],"started_at":r[9],"completed_at":r[10],"last_heartbeat_at":r[11],"contribution_seconds":r[12]}} for r in rows]
 
@@ -1386,11 +1394,23 @@ def worker_assignments(worker_id: UUID, token_worker_id: UUID = Depends(worker_i
 def get_job(job_id: UUID, account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("select id,puzzle_id,scope,status,created_at,completed_at from jobs where id=%s and scope='public-reward-challenge'", (job_id,))
+            cur.execute("""select j.id,j.puzzle_id,j.scope,j.status,j.created_at,j.completed_at
+                               from jobs j
+                               where j.id=%s and j.scope='public-reward-challenge'
+                                 and exists (
+                                   select 1 from job_assignments a
+                                   join workers w on w.id=a.worker_id
+                                   where a.job_id=j.id and w.account_id=%s
+                                 )""",(job_id,account_id))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(404, "Job not found")
-            cur.execute("select id,worker_id,status,assigned_at,started_at,completed_at,last_heartbeat_at,verified_seconds from job_assignments where job_id=%s order by assigned_at desc limit 10", (job_id,))
+            cur.execute("""select a.id,a.worker_id,a.status,a.assigned_at,a.started_at,a.completed_at,
+                                      a.last_heartbeat_at,a.verified_seconds
+                               from job_assignments a
+                               join workers w on w.id=a.worker_id
+                               where a.job_id=%s and w.account_id=%s
+                               order by a.assigned_at desc limit 10""",(job_id,account_id))
             assignments = cur.fetchall()
     return {"id":str(row[0]),"puzzle_id":row[1],"scope":row[2],"status":row[3],"created_at":row[4],"completed_at":row[5],"assignments":[{"id":str(a[0]),"worker_id":str(a[1]),"status":a[2],"assigned_at":a[3],"started_at":a[4],"completed_at":a[5],"last_heartbeat_at":a[6],"contribution_seconds":a[7]} for a in assignments]}
 
@@ -1406,6 +1426,18 @@ def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingest
         raise HTTPException(400, "Only OPEN + FUNDED challenges may enter the solver queue")
     if body.rules != "public-reward-challenge" or not body.provenance or not body.verification:
         raise HTTPException(400, "Challenge provenance and verification metadata are required")
+    verification = body.verification
+    payout = verification.get("payout") or body.verification.get("payout") or {}
+    if str(verification.get("execution_mode", "RESEARCH")).upper() != "COMPUTE":
+        raise HTTPException(400, "Only COMPUTE challenges may enter the solver queue")
+    if verification.get("adapter_audited") is not True or verification.get("adapter_runnable") is not True:
+        raise HTTPException(400, "Challenge adapter is not independently audited and runnable")
+    if verification.get("bounded_search_space") is not True or verification.get("deterministic_verifier") is not True:
+        raise HTTPException(400, "Challenge does not satisfy bounded deterministic verification gates")
+    if verification.get("permissionless_payout") is not True and payout.get("permissionless") is not True:
+        raise HTTPException(400, "Challenge payout is not permissionless")
+    if verification.get("automatic_chain_claim") is not True and payout.get("automatic_chain_claim") is not True:
+        raise HTTPException(400, "Challenge payout is not automatically claimable")
     required_provenance = ("url", "source_id", "checked_at")
     required_verification = ("method", "source_id", "checked_at", "fingerprint")
     if any(not body.provenance.get(key) for key in required_provenance):
