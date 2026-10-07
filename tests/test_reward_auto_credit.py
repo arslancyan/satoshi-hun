@@ -5,7 +5,7 @@ def test_reward_auto_credit_and_withdrawal_contract():
     api=Path("backend/api.py").read_text()
     schema=Path("backend/schema.sql").read_text()
     assert "def auto_credit_verified_claim" in api
-    assert "AUTO_REWARD_CREDITED" in api
+    assert "REWARD_REVIEW_CREATED" in api
     assert "withdrawal_queued" in api
     assert "reward_balances" in schema
     assert "reward_ledger" in schema
