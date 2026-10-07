@@ -25,7 +25,10 @@ def queue_gate(record: dict[str, Any]) -> dict[str, Any]:
         reasons.append("no_positive_balance")
     if verification.get("funding_match") is not True:
         reasons.append("funding_not_verified")
-    if verification.get("verification_stale") is not False:
+    stale = record.get("verification_stale")
+    if stale is None:
+        stale = verification.get("verification_stale")
+    if stale is not False:
         reasons.append("verification_stale")
     if verification.get("execution_mode") != "COMPUTE":
         reasons.append("execution_mode_not_compute")
