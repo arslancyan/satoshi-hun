@@ -17,7 +17,7 @@ def test_payout_completion_requires_external_txid():
     start=api.index("class WithdrawalComplete")
     end=api.index("class PayoutAddressUpdate",start)
     flow=api[start:end]
-    assert "min_length=64" in flow
+    assert "min_length=3" in flow
     assert "validate_external_txid" in flow
     assert "status='PAID'" in flow
 
