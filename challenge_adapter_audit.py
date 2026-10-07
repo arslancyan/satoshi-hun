@@ -70,7 +70,10 @@ def audit_adapter(spec: AdapterSpec) -> list[str]:
                     if not algorithm or not message:
                         errors.append("runnable test vector needs algorithm and message")
                         continue
-                    expected = _expected(algorithm, message)
+                    expected = EXPECTED_DIGESTS.get((algorithm, message))
+                    if expected is None:
+                        errors.append(f"no pinned expected digest for {algorithm}:{message}")
+                        continue
                     result = verifier(algorithm, message.encode()).hex()
                     if result != expected:
                         errors.append(
