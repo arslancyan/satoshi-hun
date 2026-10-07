@@ -42,3 +42,14 @@ def test_public_claim_schema_cannot_request_verified():
             candidate_hash="a" * 64,
             result_status="VERIFIED",
         )
+
+
+def test_marketplace_exposes_runnable_and_research_catalog_separately():
+    from backend.api import marketplace
+    import inspect
+    source = inspect.getsource(marketplace)
+    assert '"catalog":rows' in source
+    assert '"runnable"] = queue_eligible' in source
+    assert 'market_status' in source
+    assert "where status is not null" in source
+    assert 'return {"challenges":runnable' in source
