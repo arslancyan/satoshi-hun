@@ -79,6 +79,7 @@ class LiveSourceRecord:
     addresses: list[dict[str, Any]]
     challenge_type: str
     source_adapter: str
+    search_metrics: dict[str, Any] | None = None
 
     def as_registry(self):
         return {
@@ -94,6 +95,7 @@ class LiveSourceRecord:
             "payout": self.payout,
             "addresses": self.addresses,
             "source_adapter": self.source_adapter,
+            "search_metrics": self.search_metrics or {},
         }
 
 
@@ -387,6 +389,7 @@ class OpenCryptoPuzzlesAdapter:
                         "adapter_runnable": adapter_contract.get("runnable", False),
                         "difficulty_left": "research-breakthrough",
                         "difficulty_note": "Hash-collision bounty; generic full-width collision search is computationally infeasible.",
+                        "search_metrics": puzzle.get("search_metrics") or puzzle.get("runtime_metrics") or {},
                     }
                     per_provenance = {
                         **provenance,
@@ -408,6 +411,7 @@ class OpenCryptoPuzzlesAdapter:
                             [live_item],
                             "hash-collision",
                             self.adapter_id,
+                            per_verification.get("search_metrics") or {},
                         )
                     )
             else:
@@ -417,6 +421,7 @@ class OpenCryptoPuzzlesAdapter:
                 verification["adapter_id"] = adapter_contract.get("adapter_id")
                 verification["adapter_status"] = adapter_contract.get("adapter_status")
                 verification["adapter_runnable"] = adapter_contract.get("runnable", False)
+                verification["search_metrics"] = puzzle.get("search_metrics") or puzzle.get("runtime_metrics") or {}
                 out.append(
                     LiveSourceRecord(
                         ID_ALIASES.get(str(puzzle["slug"]), str(puzzle["slug"])),
@@ -431,6 +436,7 @@ class OpenCryptoPuzzlesAdapter:
                         live_addresses,
                         str((puzzle.get("puzzle_type") or ["public-puzzle"])[0]),
                         self.adapter_id,
+                        verification.get("search_metrics") or {},
                     )
                 )
         return out
