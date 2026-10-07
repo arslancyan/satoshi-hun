@@ -1588,11 +1588,6 @@ def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: 
             idempotency_store(cur,account_id,request,payload,response)
             return response
 
-def require_payout_worker(request: Request):
-    if not PAYOUT_WORKER_TOKEN: raise HTTPException(503,"Payout worker is not configured")
-    supplied=request.headers.get("X-Payout-Worker-Token","").strip()
-    if not supplied or not secrets.compare_digest(supplied,PAYOUT_WORKER_TOKEN): raise HTTPException(401,"Payout worker authorization required")
-
 @app.post("/internal/payouts/next")
 def payout_next(request: Request):
     enforce_rate_limit(request,"write")
