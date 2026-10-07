@@ -65,6 +65,6 @@ def test_protocol_eligibility_requires_complete_public_metadata():
 def test_worker_solver_gate_requires_public_scope_and_metadata():
     from pathlib import Path
     worker = Path("worker.py").read_text()
-    assert 'p.get("rules") != "public-reward-challenge"' in worker
+    assert 'rules") == "public-reward-challenge"' in worker
     assert 'metadata_ok' in worker
     assert 'fully verified for local work' in worker
