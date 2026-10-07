@@ -44,7 +44,7 @@ def test_live_sync_uses_runtime_discovery_readiness():
     research = adapter_readiness("keir-finlow-bates-blockchain-book-600ksats")
     unknown = adapter_readiness("future-source-puzzle")
     assert runnable["readiness"] == "VERIFIED"
-    assert runnable["execution_allowed"] is True
+    assert runnable["execution_allowed"] is False
     assert research["readiness"] == "VERIFIED"
     assert research["execution_allowed"] is False
     assert unknown["readiness"] == "DISCOVERED"
