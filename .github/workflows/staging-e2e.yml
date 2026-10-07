@@ -3,6 +3,11 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+
+concurrency:
+  group: staging-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
     runs-on: ubuntu-latest
@@ -46,3 +51,11 @@ jobs:
         env:
           SATOSHI_HUNT_API: http://127.0.0.1:8000
         run: python tools/staging_e2e.py
+
+      - name: Upload API log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-e2e-api-log-${{ github.run_id }}
+          path: /tmp/satoshi-hunt-api.log
+          if-no-files-found: warn
