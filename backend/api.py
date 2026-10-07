@@ -2422,6 +2422,12 @@ def update_payout_address(body: PayoutAddressUpdate, request: Request, account_i
             return response
 
 
+def btc_to_sats(value) -> int:
+    return int(Decimal(str(value or 0)) * Decimal("100000000"))
+
+def btc_display(value) -> str:
+    return format(Decimal(str(value or 0)), ".8f")
+
 @app.get("/account/rewards")
 def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
@@ -2434,11 +2440,21 @@ def account_rewards(account_id: UUID = Depends(account_id_from_auth)):
                 (account_id,),
             )
             withdrawals=cur.fetchall()
+    available_btc=balance[0] if balance else Decimal("0")
     return {
-        "available_btc": float(balance[0]) if balance else 0.0,
+        "available_btc": btc_display(available_btc),
+        "available_sats": btc_to_sats(available_btc),
         "withdrawals":[
-            {"id":str(r[0]),"amount_btc":float(r[1]),"payout_address":r[2],"status":r[3],
-             "external_reference":r[4],"created_at":r[5],"processed_at":r[6]}
+            {
+                "id":str(r[0]),
+                "amount_btc":btc_display(r[1]),
+                "amount_sats":btc_to_sats(r[1]),
+                "payout_address":r[2],
+                "status":r[3],
+                "external_reference":r[4],
+                "created_at":r[5],
+                "processed_at":r[6],
+            }
             for r in withdrawals
         ],
     }
