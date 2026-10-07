@@ -935,7 +935,7 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             if paused:
                 aid,job_id=paused
                 capacity=economic_capacity(cur,job_id)
-                if not capacity["allowed"]: raise HTTPException(429,f"Allocation paused: {capacity['reason']}")
+                if not capacity["allowed"]: raise HTTPException(429, allocation_capacity_error(capacity["reason"]))
                 cur.execute(
                     "update job_assignments set status='ASSIGNED',started_at=null,last_heartbeat_at=null,completed_at=null,expired_at=null where id=%s",
                     (aid,),
@@ -1828,6 +1828,16 @@ def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(acc
 
 
 
+def allocation_capacity_error(reason: str) -> str:
+    messages = {
+        "THIS_PUZZLE_IS_ALREADY_RUNNING": "This puzzle is already running on another worker. Choose another live puzzle.",
+        "NETWORK_ASSIGNMENT_CAP": "The network is temporarily at its worker capacity. Please try again shortly.",
+        "DAILY_WORKER_HOUR_CAP": "The network has reached its daily worker capacity. Please try again later.",
+        "CHALLENGE_NOT_FUNDED": "This puzzle is no longer funded or runnable.",
+    }
+    return messages.get(reason, f"Allocation is temporarily unavailable: {reason}")
+
+
 def economic_capacity(cur, job_id: UUID):
     # Serialize allocation decisions so concurrent requests cannot overshoot
     # the global active-assignment ceiling.
@@ -1865,7 +1875,7 @@ def assign_job(job_id: UUID, body: AssignmentCreate, request: Request, account_i
                 raise HTTPException(409, f"Job is not assignable from {job[1]} state")
             capacity = economic_capacity(cur, job_id)
             if not capacity["allowed"]:
-                raise HTTPException(429, f"Allocation paused: {capacity['reason']}")
+                raise HTTPException(429, allocation_capacity_error(capacity["reason"]))
             cur.execute(
                 "select id from workers where id=%s and account_id=%s and status='ACTIVE' for update",
                 (body.worker_id, account_id),
