@@ -32,10 +32,11 @@ def _upsert(cur, record, solve_evidence=None):
           (id,title,challenge_type,reward_btc,balance_btc,status,rules,provenance,
            verification,payout,source_adapter,live_checked_at,live_verification,
            advertised_reward_btc,verified_balance_btc,funding_match,
-           verification_stale,last_live_check_error,funding_snapshot,solve_evidence)
+           verification_stale,last_live_check_error,funding_snapshot,solve_evidence,
+           search_metrics,expected_value_score)
         values
           (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s,%s,%s::jsonb,
-           %s,%s,%s,false,null,%s::jsonb,%s::jsonb)
+           %s,%s,%s,false,null,%s::jsonb,%s::jsonb,%s::jsonb,%s)
         on conflict(id) do update set
           title=excluded.title, challenge_type=excluded.challenge_type,
           reward_btc=excluded.reward_btc, balance_btc=excluded.balance_btc,
@@ -51,6 +52,8 @@ def _upsert(cur, record, solve_evidence=None):
           funding_match=excluded.funding_match,
           verification_stale=false, last_live_check_error=null,
           funding_snapshot=excluded.funding_snapshot,
+          search_metrics=excluded.search_metrics,
+          expected_value_score=excluded.expected_value_score,
           solve_evidence=case
             when challenge_registry.solve_evidence <> '{}'::jsonb
             then challenge_registry.solve_evidence
@@ -67,6 +70,8 @@ def _upsert(cur, record, solve_evidence=None):
             v["advertised_reward_btc"], v["verified_balance_btc"],
             v["funding_match"], json.dumps(snapshot),
             json.dumps(solve_evidence or {}),
+            json.dumps(r.get("search_metrics") or {}),
+            float((r.get("search_metrics") or {}).get("expected_value_score", 0) or 0),
         ),
     )
 
