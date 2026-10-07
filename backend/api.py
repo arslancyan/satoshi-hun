@@ -2149,6 +2149,26 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
         "update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",
         (job_id,),
     )
+    # First valid solution wins. Stop every other worker assigned to this
+    # puzzle so they do not keep hashing or submit stale claims.
+    cur.execute(
+        "select id,worker_id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING') for update",
+        (job_id,),
+    )
+    remaining_assignments = cur.fetchall()
+    for other_assignment_id, other_worker_id in remaining_assignments:
+        if other_assignment_id != claim_id:
+            _stop_managed_solver(other_assignment_id)
+        cur.execute(
+            "update job_assignments set status='COMPLETED',completed_at=now(),last_heartbeat_at=null "
+            "where id=%s and status in ('ASSIGNED','RUNNING')",
+            (other_assignment_id,),
+        )
+        record_audit_event(
+            cur, "PUZZLE_WORKER_STOPPED_AFTER_SOLUTION", "assignment",
+            other_assignment_id, worker_id=other_worker_id,
+            payload={"job_id":str(job_id),"winning_claim_id":str(claim_id)},
+        )
     cur.execute("select account_id from workers where id=%s for update",(worker_id,))
     account_row=cur.fetchone()
     if not account_row:
