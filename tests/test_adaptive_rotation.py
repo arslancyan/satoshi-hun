@@ -18,6 +18,7 @@ def record(id, probability, reward, workers=0, action_ready=True):
             "active_workers": workers,
             "reliability": 1.0,
             "measured_at": "2026-10-07T00:00:00+00:00",
+            "exhaustion_hours": 24.0,
         },
     }
 
