@@ -72,7 +72,7 @@ def hash_digest(algorithm, message):
     raise ValueError(f"Unsupported collision algorithm: {algorithm}")
 
 
-def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory_mb=256, checkpoint_callback=None, stop_event=None):
+def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory_mb=256, checkpoint_callback=None, stop_event=None, stride=1):
     """Perform a genuine birthday collision search.
 
     The returned candidate is exactly the format accepted by the Peter Todd
@@ -84,7 +84,8 @@ def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory
     cursor = int(start_cursor)
     max_candidates = int(max_candidates)
     max_memory_bytes = max(32, int(max_memory_mb)) * 1024 * 1024
-    checkpoint_end = start_cursor + max_candidates if max_candidates else (2**63 - 1)
+    stride = max(1, int(stride))
+    checkpoint_end = (2**64 - 1) if stride > 1 else (start_cursor + max_candidates if max_candidates else (2**63 - 1))
     started = time.monotonic()
     last_checkpoint = cursor
     last_checkpoint_at = started
@@ -92,7 +93,7 @@ def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory
     while True:
         if stop_event and stop_event.is_set():
             return None, cursor, time.monotonic() - started
-        if max_candidates and cursor - start_cursor >= max_candidates:
+        if max_candidates and ((cursor - start_cursor) // stride) >= max_candidates:
             return None, cursor, time.monotonic() - started
 
         message = b"satoshi-hunt:" + cursor.to_bytes(8, "big")
@@ -104,7 +105,7 @@ def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory
             if hash_digest(algorithm, previous) == hash_digest(algorithm, message):
                 return f"{algorithm}:{previous.hex()}:{message.hex()}", cursor + 1, time.monotonic() - started
         seen[digest] = message
-        cursor += 1
+        cursor += stride
 
         # Keep memory bounded. Once the configured table budget is reached,
         # stop rather than silently swapping the user's machine.
@@ -159,6 +160,14 @@ async def run_assignment(assignment):
         max_candidates = max(0, int(os.environ.get("SATOSHI_HUNT_MAX_CANDIDATES", "0")))
         max_memory_mb = max(32, int(os.environ.get("SATOSHI_HUNT_MAX_MEMORY_MB", "256")))
         cursor_start = int(os.environ.get("SATOSHI_HUNT_START_CURSOR", "0"))
+        # Give each worker a deterministic 48-bit lane of the 64-bit search
+        # space. This lets many workers attack the same puzzle without
+        # repeatedly hashing the same candidates.
+        lane_material = f"{job_id}:{WORKER_ID}".encode()
+        lane = int.from_bytes(hashlib.sha256(lane_material).digest()[:6], "big")
+        lane_step = 1 << 48
+        if "SATOSHI_HUNT_START_CURSOR" not in os.environ:
+            cursor_start = lane
 
         def checkpoint(start, end, nxt, nonce):
             try:
@@ -180,6 +189,7 @@ async def run_assignment(assignment):
             max_memory_mb,
             checkpoint,
             stop_event,
+            lane_step,
         )
 
         if stop_event.is_set():
