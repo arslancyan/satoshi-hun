@@ -168,13 +168,6 @@ def _start_managed_solver(assignment_id, job_id, worker_id):
                             )
                     last_heartbeat = now
                 if now - last_checkpoint >= 30:
-                    with db() as conn:
-                        with conn.cursor() as cur:
-                            cur.execute(
-                                "insert into job_checkpoints(id,assignment_id,cursor_start,cursor_end,cursor_next,nonce) "
-                                "values(%s,%s,0,%s,%s,%s)",
-                                (uuid4(),assignment_id,cursor,cursor,cursor),
-                            )
                     last_checkpoint = now
             with db() as conn:
                 with conn.cursor() as cur:
