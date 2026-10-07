@@ -32,7 +32,8 @@ def test_api_claim_verification_contract():
     verify=api[api.index("def auto_credit_verified_claim"):api.index('@app.post("/jobs/{job_id}/claims")')]
     assert 'body.result_status == "VERIFIED"' in claims
     assert "server-side challenge adapter" in claims
-    assert "c.result_status='TESTED'" in verify
+    assert "result_status='TESTED'" in claims
+    assert "update work_claims set result_status='VERIFIED'" in verify
     assert "source_claim_id" in verify
     assert "settlement_status,source_claim_id" in verify
     assert "values(%s,%s,%s,%s,%s,%s,'REVIEW',%s)" in verify
