@@ -75,6 +75,50 @@ if _run_marker in s:
     if _run_needle in _run_tail and "pg_advisory_xact_lock(hashtext(%s))" not in _run_tail:
         _run_tail=_run_tail.replace(_run_needle,_run_insert,1)
         s=s[:_run_start]+_run_tail
+# Worker ChatGPT control endpoints are injected into the runtime API as well as source.
+if '@app.post("/assignments/{assignment_id}/pause")' not in s:
+    worker_control_routes = r'''@app.post("/assignments/{assignment_id}/pause")
+def pause_assignment(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id),"action":"pause"}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None: return replay
+            cur.execute("select a.id,a.job_id,a.worker_id,a.status,j.puzzle_id from job_assignments a join workers w on w.id=a.worker_id join jobs j on j.id=a.job_id where a.id=%s and w.account_id=%s for update",(assignment_id,account_id))
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3] not in ("ASSIGNED","RUNNING"): raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("update job_assignments set status='PAUSED',completed_at=null,last_heartbeat_at=null where id=%s",(assignment_id,))
+            cur.execute("update jobs set status='QUEUED',completed_at=null where id=%s and status in ('ASSIGNED','RUNNING','QUEUED')",(row[1],))
+            record_audit_event(cur,"PAUSED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"puzzle_id":row[4],"reason":"worker_control"})
+            response={"assignment_id":str(assignment_id),"job_id":str(row[1]),"puzzle_id":row[4],"status":"PAUSED"}
+            idempotency_store(cur,account_id,request,payload,response)
+            return response
+
+@app.post("/assignments/{assignment_id}/stop")
+def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id),"action":"stop"}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None: return replay
+            cur.execute("select a.id,a.job_id,a.worker_id,a.status,j.puzzle_id from job_assignments a join workers w on w.id=a.worker_id join jobs j on j.id=a.job_id where a.id=%s and w.account_id=%s for update",(assignment_id,account_id))
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3] not in ("ASSIGNED","RUNNING"): raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("update job_assignments set status='RELEASED',completed_at=now(),last_heartbeat_at=null where id=%s",(assignment_id,))
+            cur.execute("update jobs set status='QUEUED',completed_at=null where id=%s and status in ('ASSIGNED','RUNNING','QUEUED')",(row[1],))
+            record_audit_event(cur,"RELEASED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"puzzle_id":row[4],"reason":"worker_control"})
+            response={"assignment_id":str(assignment_id),"job_id":str(row[1]),"puzzle_id":row[4],"status":"RELEASED"}
+            idempotency_store(cur,account_id,request,payload,response)
+            return response
+
+'''
+    if marker in s:
+        s=s.replace(marker,worker_control_routes+marker,1)
+
 p.write_text(s)
 
 
