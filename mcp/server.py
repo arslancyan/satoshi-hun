@@ -88,7 +88,7 @@ async def get_reward_status(ctx: Context) -> dict:
     return await _get("/account/rewards", _token(ctx))
 
 @mcp.tool()
-async def rank_puzzles(limit: int = 20, ctx: Context = None) -> dict:
+async def rank_puzzles(ctx: Context, limit: int = 20) -> dict:
     """Return current adaptive ranking, limited to the live marketplace."""
     data = await list_live_puzzles(ctx)
     rows = data.get("challenges", data.get("offers", []))
