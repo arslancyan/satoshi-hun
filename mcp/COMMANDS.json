@@ -1,0 +1,78 @@
+{
+  "name": "Satoshi Hunt Worker Control",
+  "version": "1.0",
+  "role": "worker",
+  "scopes": [
+    "worker:read",
+    "worker:control"
+  ],
+  "commands": [
+    {
+      "tool": "satoshi_status",
+      "mode": "read"
+    },
+    {
+      "tool": "list_live_puzzles",
+      "mode": "read"
+    },
+    {
+      "tool": "get_puzzle",
+      "mode": "read"
+    },
+    {
+      "tool": "get_worker_status",
+      "mode": "read"
+    },
+    {
+      "tool": "get_worker_jobs",
+      "mode": "read"
+    },
+    {
+      "tool": "get_telemetry",
+      "mode": "read"
+    },
+    {
+      "tool": "get_reward_status",
+      "mode": "read"
+    },
+    {
+      "tool": "rank_puzzles",
+      "mode": "read"
+    },
+    {
+      "tool": "check_queue_eligibility",
+      "mode": "read"
+    },
+    {
+      "tool": "run_puzzle",
+      "mode": "control"
+    },
+    {
+      "tool": "pause_puzzle",
+      "mode": "control"
+    },
+    {
+      "tool": "stop_puzzle",
+      "mode": "control"
+    },
+    {
+      "tool": "switch_puzzle",
+      "mode": "control"
+    },
+    {
+      "tool": "restart_worker",
+      "mode": "control"
+    }
+  ],
+  "forbidden": [
+    "admin operations",
+    "registry mutation",
+    "funding configuration",
+    "payout configuration",
+    "database access",
+    "private keys",
+    "seed phrases",
+    "unaudited adapters",
+    "research-only challenges"
+  ]
+}
