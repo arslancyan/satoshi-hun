@@ -4,10 +4,10 @@
 This is deliberately not a Bitcoin signer. It returns a fake external reference
 so the Satoshi Hunt payout state machine can be tested end-to-end without funds.
 """
-import json, os
+import json, os, hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-PREFIX=os.environ.get("MOCK_PAYOUT_TX_PREFIX","staging-mock-")
+PREFIX=os.environ.get("MOCK_PAYOUT_TX_PREFIX","a"*16)
 PORT=int(os.environ.get("MOCK_PAYOUT_PORT","8765"))
 
 class Handler(BaseHTTPRequestHandler):
@@ -16,7 +16,7 @@ class Handler(BaseHTTPRequestHandler):
         body=json.loads(self.rfile.read(length) or b"{}")
         if not body.get("withdrawal_id") or not body.get("amount_btc") or not body.get("payout_address"):
             self.send_response(400); self.end_headers(); return
-        txid=PREFIX+body["withdrawal_id"].replace("-","")[:24]
+        txid=(PREFIX+hashlib.sha256(body["withdrawal_id"].encode()).hexdigest())[:64]
         payload=json.dumps({"txid":txid,"mode":"staging-mock","custody":"none"}).encode()
         self.send_response(200)
         self.send_header("Content-Type","application/json")
