@@ -4,12 +4,10 @@ import os
 p=Path(os.environ.get("SATOSHI_HUNT_API_PATH", "/app/backend/api.py"))
 s=p.read_text()
 
-old='''            cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')",(job_id,))
-            if cur.fetchone(): raise HTTPException(409,"Challenge is already being run by another worker")
-            # Account-level exclusivity: switching puzzles pauses the account's
-            # previous active assignment, even when it uses another worker.
+old='''            # Account-level exclusivity: switching puzzles pauses all active
+            # assignments owned by this account, across all of its workers.
             cur.execute(
-                "update job_assignments set status='PAUSED',completed_at=null "
+                "update job_assignments set status='PAUSED',completed_at=null,last_heartbeat_at=null "
                 "where worker_id in (select id from workers where account_id=%s) "
                 "and status in ('ASSIGNED','RUNNING') "
                 "returning id,job_id,worker_id",
@@ -22,6 +20,19 @@ old='''            cur.execute("select id from job_assignments where job_id=%s a
                     "where id=%s and status='RUNNING'",
                     (paused_job_id,),
                 )
+            # Keep a repeated click on the currently active worker/challenge idempotent.
+            cur.execute(
+                "select id,status from job_assignments where job_id=%s and worker_id=%s "
+                "and status in ('ASSIGNED','RUNNING')",
+                (job_id,body.worker_id),
+            )
+            existing_assignment=cur.fetchone()
+            if existing_assignment:
+                response={"challenge_id":challenge_id,"job_id":str(job_id),
+                          "assignment_id":str(existing_assignment[0]),"worker_id":str(body.worker_id),
+                          "status":existing_assignment[1]}
+                idempotency_store(cur,account_id,request,payload,response)
+                return response
             capacity=economic_capacity(cur,job_id)'''
 new='''            cur.execute("select id,status from job_assignments where job_id=%s and worker_id=%s and status in ('ASSIGNED','RUNNING')",(job_id,body.worker_id))
             existing_assignment=cur.fetchone()
