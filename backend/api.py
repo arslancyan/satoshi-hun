@@ -561,7 +561,18 @@ def marketplace():
                 """select id,title,challenge_type,reward_btc,balance_btc,status,provenance,
                           verification,payout,source_adapter,live_checked_at,live_verification,
                           advertised_reward_btc,verified_balance_btc,funding_match,verification_stale,last_live_check_error,
-                          search_metrics,expected_value_score
+                          search_metrics,expected_value_score,
+                          (
+                            status='OPEN + FUNDED'
+                            and balance_btc > 0
+                            and funding_match = true
+                            and verification_stale = false
+                            and coalesce((payout->>'permissionless'),'false')='true'
+                            and coalesce((payout->>'automatic_chain_claim'),'false')='true'
+                            and coalesce((verification->>'execution_mode'),'RESEARCH')='COMPUTE'
+                            and coalesce((verification->>'adapter_audited'),'false')='true'
+                            and coalesce((verification->>'adapter_runnable'),'false')='true'
+                          ) as queue_eligible
                    from challenge_registry
                    where status='OPEN + FUNDED'
                      and balance_btc > 0
@@ -569,12 +580,21 @@ def marketplace():
                      and verification_stale = false
                      and coalesce((payout->>'permissionless'),'false')='true'
                      and coalesce((payout->>'automatic_chain_claim'),'false')='true'
-                   order by balance_btc desc, updated_at desc, id asc
+                   order by
+                     case coalesce(search_metrics->>'strategy_action','RESEARCH')
+                       when 'RUN' then 0
+                       when 'PAUSE' then 1
+                       else 2
+                     end,
+                     coalesce((search_metrics->>'opportunity_score')::double precision,0) desc,
+                     coalesce(expected_value_score,0) desc,
+                     updated_at desc,
+                     id asc
                    limit 100"""
             )
             keys=["challenge_id","title","challenge_type","reward_btc","balance_btc","status",
                   "provenance","verification","payout","source_adapter","live_checked_at","live_verification",
-                  "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error","search_metrics","expected_value_score"]
+                  "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error","search_metrics","expected_value_score","queue_eligible"]
             rows=[dict(zip(keys,x)) for x in cur.fetchall()]
             for row in rows:
                 row["selected"]=False
