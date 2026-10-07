@@ -1465,6 +1465,800 @@ def admin_rewards(account_id: UUID = Depends(account_id_from_auth)):
             return {"rewards":[dict(zip(["id","account_id","puzzle_id","gross_reward_btc","worker_share_btc","platform_fee_btc","settlement_status","source_claim_id","created_at","approved_at","settled_at"],r)) for r in cur.fetchall()]}
 
 
+@app.post("/admin/rewards/{reward_id}/void")
+def void_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"reward_id":str(reward_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute("update reward_events set settlement_status='VOID' where id=%s and settlement_status in ('REVIEW','APPROVED') returning puzzle_id", (reward_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Reward cannot be voided from its current state")
+            record_audit_event(cur,"REWARD_VOID","reward_event",reward_id,account_id,payload={"puzzle_id":row[0]})
+            response={"status":"VOID","reward_id":str(reward_id)}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+@app.post("/admin/rewards/{reward_id}/settle")
+def settle_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"reward_id":str(reward_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute("update reward_events set settlement_status='SETTLED',settled_at=now() where id=%s and settlement_status='APPROVED' returning puzzle_id,account_id,worker_share_btc,platform_fee_btc", (reward_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Reward must be APPROVED before settlement")
+            record_audit_event(cur,"REWARD_SETTLED","reward_event",reward_id,account_id,payload={"puzzle_id":row[0],"beneficiary_account":str(row[1]),"custody":"none"})
+            response={"status":"SETTLED","reward_id":str(reward_id),"custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+@app.get("/admin/community")
+def admin_community(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("select id,source_reward_event_id,amount_btc,status,created_at,approved_at,distributed_at from community_allocations order by created_at desc limit 100")
+            return {"allocations":[dict(zip(["id","source_reward_event_id","amount_btc","status","created_at","approved_at","distributed_at"],r)) for r in cur.fetchall()]}
+
+
+@app.post("/admin/community")
+def create_community_allocation(source_reward_event_id: UUID, amount_btc: float, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"source_reward_event_id":str(source_reward_event_id),"amount_btc":amount_btc}
+    if amount_btc <= 0: raise HTTPException(400, "amount_btc must be positive")
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute("select platform_fee_btc,account_id,puzzle_id,settlement_status from reward_events where id=%s for update", (source_reward_event_id,))
+            row=cur.fetchone()
+            if not row or row[3] != "SETTLED": raise HTTPException(409, "Source reward must be SETTLED")
+            cur.execute("select coalesce(sum(amount_btc),0) from community_allocations where source_reward_event_id=%s and status <> 'CANCELLED'", (source_reward_event_id,))
+            allocated = cur.fetchone()[0]
+            remaining = row[0] - allocated
+            if Decimal(str(amount_btc)) > remaining:
+                raise HTTPException(400, "Allocation exceeds the remaining platform fee for this reward event")
+            cur.execute("insert into community_allocations(id,source_reward_event_id,amount_btc) values(%s,%s,%s) returning id", (uuid4(),source_reward_event_id,amount_btc))
+            alloc=cur.fetchone()[0]
+            record_audit_event(cur,"COMMUNITY_ALLOCATION_CREATED","community_allocation",alloc,account_id,payload={"source_reward_event":str(source_reward_event_id),"amount_btc":amount_btc})
+            response={"id":str(alloc),"status":"MANUAL_REVIEW"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+@app.post("/admin/community/{allocation_id}/approve")
+def approve_community(allocation_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"allocation_id":str(allocation_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute("update community_allocations set status='APPROVED',approved_at=now() where id=%s and status='MANUAL_REVIEW' returning amount_btc", (allocation_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Allocation is not in MANUAL_REVIEW")
+            record_audit_event(cur,"COMMUNITY_ALLOCATION_APPROVED","community_allocation",allocation_id,account_id,payload={"amount_btc":row[0]})
+            response={"status":"APPROVED","id":str(allocation_id)}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+@app.post("/admin/community/{allocation_id}/distributed")
+def distribute_community(allocation_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"allocation_id":str(allocation_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute("update community_allocations set status='DISTRIBUTED',distributed_at=now() where id=%s and status='APPROVED' returning amount_btc", (allocation_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(409, "Allocation must be APPROVED before distribution")
+            record_audit_event(cur,"COMMUNITY_ALLOCATION_DISTRIBUTED","community_allocation",allocation_id,account_id,payload={"amount_btc":row[0],"custody":"none"})
+            response={"status":"DISTRIBUTED","id":str(allocation_id),"custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+@app.post("/jobs")
+def create_job(body: JobCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    raise HTTPException(403, "Jobs are created only by the verified challenge-ingestion pipeline.")
+
+
+
+def economic_capacity(cur, job_id: UUID):
+    # Serialize allocation decisions so concurrent requests cannot overshoot
+    # the global active-assignment ceiling.
+    cur.execute("select pg_advisory_xact_lock(93218471)")
+    cur.execute("select count(*) from job_assignments where status in ('ASSIGNED','RUNNING')")
+    active_assignments = cur.fetchone()[0]
+    if active_assignments >= MAX_ACTIVE_ASSIGNMENTS:
+        return {"allowed": False, "reason": "NETWORK_ASSIGNMENT_CAP"}
+    cur.execute("select count(*) from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING')", (job_id,))
+    if cur.fetchone()[0] >= MAX_ACTIVE_ASSIGNMENTS_PER_JOB:
+        return {"allowed": False, "reason": "JOB_ASSIGNMENT_CAP"}
+    cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where period_start=current_date")
+    daily_hours = int(cur.fetchone()[0] or 0) / 3600
+    if daily_hours >= MAX_NETWORK_WORKER_HOURS_PER_DAY:
+        return {"allowed": False, "reason": "DAILY_WORKER_HOUR_CAP"}
+    cur.execute("select c.balance_btc,c.status from jobs j join challenge_registry c on c.id=j.puzzle_id where j.id=%s for update", (job_id,))
+    challenge = cur.fetchone()
+    if not challenge or challenge[1] != "OPEN + FUNDED" or challenge[0] <= 0:
+        return {"allowed": False, "reason": "CHALLENGE_NOT_FUNDED"}
+    return {"allowed": True}
+
+
+@app.post("/jobs/{job_id}/assign")
+def assign_job(job_id: UUID, body: AssignmentCreate, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    aid = uuid4()
+    with db() as conn:
+        with conn.cursor() as cur:
+            expire_stale_assignments(cur)
+            cur.execute("select id,status from jobs where id=%s and scope='public-reward-challenge' for update", (job_id,))
+            job = cur.fetchone()
+            if not job:
+                raise HTTPException(404, "Job not found")
+            if job[1] != "QUEUED":
+                raise HTTPException(409, f"Job is not assignable from {job[1]} state")
+            capacity = economic_capacity(cur, job_id)
+            if not capacity["allowed"]:
+                raise HTTPException(429, f"Allocation paused: {capacity['reason']}")
+            cur.execute(
+                "select id from workers where id=%s and account_id=%s and status='ACTIVE' for update",
+                (body.worker_id, account_id),
+            )
+            if not cur.fetchone():
+                raise HTTPException(400, "Selected worker is not active or does not belong to this account")
+            cur.execute("select id from job_assignments where job_id=%s and status in ('ASSIGNED','RUNNING') for update", (job_id,))
+            if cur.fetchone():
+                raise HTTPException(409, "Job is already assigned")
+            cur.execute("insert into job_assignments(id,job_id,worker_id,status) values(%s,%s,%s,'ASSIGNED')", (aid,job_id,body.worker_id))
+    return {"assignment_id":str(aid),"job_id":str(job_id),"worker_id":str(body.worker_id),"status":"ASSIGNED"}
+
+
+def expire_stale_assignments(cur):
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=ASSIGNMENT_TIMEOUT_SECONDS)
+    cur.execute(
+        "update job_assignments set status='EXPIRED',expired_at=now() "
+        "where status in ('ASSIGNED','RUNNING') "
+        "and coalesce(last_heartbeat_at,assigned_at) < %s "
+        "returning id,job_id,worker_id",
+        (cutoff,),
+    )
+    for assignment_id,job_id,worker_id in cur.fetchall():
+        cur.execute(
+            "update jobs set status='QUEUED',completed_at=null "
+            "where id=%s and status in ('RUNNING','QUEUED')",
+            (job_id,),
+        )
+        cur.execute("select account_id from workers where id=%s", (worker_id,))
+        account_row=cur.fetchone()
+        record_audit_event(
+            cur,
+            "EXPIRED",
+            "assignment",
+            assignment_id,
+            account_id=account_row[0] if account_row else None,
+            worker_id=worker_id,
+            payload={"job_id":str(job_id),"timeout_seconds":ASSIGNMENT_TIMEOUT_SECONDS},
+        )
+
+
+def assignment_for_worker(cur, assignment_id: UUID, worker_id: UUID):
+    cur.execute("select id,job_id,worker_id,status,started_at from job_assignments where id=%s and worker_id=%s for update", (assignment_id, worker_id))
+    return cur.fetchone()
+
+
+def assignment_for_account(cur, assignment_id: UUID, account_id: UUID):
+    cur.execute("select a.id,a.job_id,a.worker_id,a.status,j.status from job_assignments a join workers w on w.id=a.worker_id join jobs j on j.id=a.job_id where a.id=%s and w.account_id=%s for update", (assignment_id,account_id))
+    return cur.fetchone()
+
+
+@app.post("/assignments/{assignment_id}/start")
+def start_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
+    enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id)}
+    now = datetime.now(timezone.utc)
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
+            expire_stale_assignments(cur)
+            row=assignment_for_worker(cur,assignment_id,token_worker_id)
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3]!="ASSIGNED": raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("update job_assignments set status='RUNNING',started_at=%s,last_heartbeat_at=%s where id=%s and status='ASSIGNED'",(now,now,assignment_id))
+            if cur.rowcount != 1:
+                raise HTTPException(409, "Assignment changed before start")
+            cur.execute("update jobs set status='RUNNING' where id=%s and status='QUEUED'",(row[1],))
+            record_audit_event(cur,"STARTED","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
+            response={"assignment_id":str(assignment_id),"status":"RUNNING","started_at":now}
+
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
+    return response
+
+
+@app.post("/assignments/{assignment_id}/heartbeat")
+def assignment_heartbeat(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
+    enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id)}
+    now=datetime.now(timezone.utc)
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
+            expire_stale_assignments(cur)
+            row=assignment_for_worker(cur,assignment_id,token_worker_id)
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3]!="RUNNING": raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("update job_assignments set last_heartbeat_at=%s where id=%s",(now,assignment_id))
+            cur.execute("update workers set last_seen_at=%s where id=%s",(now,row[2]))
+            record_audit_event(cur,"HEARTBEAT","assignment",assignment_id,worker_id=token_worker_id,payload={"job_id":str(row[1])})
+            response={"assignment_id":str(assignment_id),"status":"RUNNING","heartbeat_at":now}
+
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
+    return response
+
+
+@app.post("/assignments/{assignment_id}/complete")
+def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
+    enforce_rate_limit(request, "write")
+    payload={"assignment_id":str(assignment_id)}
+    now=datetime.now(timezone.utc)
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
+            expire_stale_assignments(cur)
+            row=assignment_for_worker(cur,assignment_id,token_worker_id)
+            if not row: raise HTTPException(404,"Assignment not found")
+            if row[3]!="RUNNING": raise HTTPException(409,f"Assignment is {row[3]}")
+            cur.execute("select w.account_id from workers w where w.id=%s", (token_worker_id,))
+            account_row=cur.fetchone()
+            if not account_row: raise HTTPException(404,"Worker not found")
+            account_id=account_row[0]
+            started_at=row[4]
+            if not started_at:
+                raise HTTPException(409, "Assignment has no server start time")
+            seconds=max(0,int((now-started_at).total_seconds()))
+            cur.execute("update job_assignments set status='COMPLETED',completed_at=%s,last_heartbeat_at=%s,verified_seconds=%s where id=%s and status='RUNNING'",(now,now,seconds,assignment_id))
+            if cur.rowcount != 1:
+                raise HTTPException(409, "Assignment changed before completion")
+            cur.execute("update jobs set status='COMPLETED',completed_at=%s where id=%s and status='RUNNING'",(now,row[1]))
+            period_start=started_at.date()
+            end_date=now.date()
+            while period_start <= end_date:
+                day_start=datetime.combine(period_start, datetime.min.time(), tzinfo=timezone.utc)
+                day_end=day_start+timedelta(days=1)
+                segment_start=max(started_at,day_start)
+                segment_end=min(now,day_end)
+                segment_seconds=max(0,int((segment_end-segment_start).total_seconds()))
+                if segment_seconds:
+                    cur.execute(
+                        "insert into worker_hours(id,account_id,worker_id,period_start,seconds_verified) values(%s,%s,%s,%s,%s) "
+                        "on conflict(worker_id,period_start) do update set seconds_verified=worker_hours.seconds_verified+excluded.seconds_verified",
+                        (uuid4(),account_id,row[2],period_start,segment_seconds),
+                    )
+                period_start += timedelta(days=1)
+            record_audit_event(cur,"COMPLETED","assignment",assignment_id,account_id,row[2],{"job_id":str(row[1]),"contribution_seconds":seconds})
+            response={"assignment_id":str(assignment_id),"status":"COMPLETED","contribution_seconds":seconds}
+
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
+    return response
+
+
+def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash):
+    cur.execute(
+        "select j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification "
+        "from jobs j join challenge_registry c on c.id=j.puzzle_id "
+        "where j.id=%s and j.scope='public-reward-challenge' for update",
+        (job_id,),
+    )
+    job=cur.fetchone()
+    if not job:
+        return None
+    record={
+        "id":job[0],"type":job[2],"reward_btc":job[3],"balance_btc":job[4],
+        "status":job[5],"rules":job[6],"provenance":job[7],"verification":job[8],
+    }
+    result=verify_candidate_hash(record,candidate_hash)
+    if not result["verified"]:
+        cur.execute("update work_claims set result_status='REJECTED' where id=%s and result_status='TESTED'",(claim_id,))
+        return {"verified":False,"reason":result["reason"]}
+    cur.execute("update work_claims set result_status='VERIFIED' where id=%s and result_status='TESTED'",(claim_id,))
+    if cur.rowcount != 1:
+        return None
+    cur.execute("update jobs set status='VERIFIED',completed_at=coalesce(completed_at,now()) where id=%s",(job_id,))
+    cur.execute(
+        "update job_assignments set status='COMPLETED',completed_at=now(),last_heartbeat_at=null "
+        "where id=(select id from job_assignments where job_id=%s and worker_id=%s and status='RUNNING' order by assigned_at desc limit 1)",
+        (job_id,worker_id),
+    )
+    cur.execute(
+        "update job_assignments set status='RELEASED',completed_at=now(),last_heartbeat_at=null "
+        "where job_id=%s and status in ('ASSIGNED','RUNNING')",
+        (job_id,),
+    )
+    cur.execute("select account_id from workers where id=%s for update",(worker_id,))
+    account_row=cur.fetchone()
+    if not account_row:
+        raise HTTPException(404,"Worker account not found")
+    account_id=account_row[0]
+    event=build_reward_event(account_id,job[0],job[3])
+    if Decimal(str(event["worker_share_btc"])) + Decimal(str(event["platform_fee_btc"])) != Decimal(str(event["gross_reward_btc"])):
+        raise HTTPException(500,"Reward split integrity check failed")
+    reward_id=uuid4()
+    cur.execute(
+        "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id) "
+        "values(%s,%s,%s,%s,%s,%s,'REVIEW',%s) "
+        "on conflict (puzzle_id,account_id) where settlement_status <> 'VOID' do nothing returning id",
+        (reward_id,account_id,job[0],event["gross_reward_btc"],event["worker_share_btc"],event["platform_fee_btc"],claim_id),
+    )
+    inserted=cur.fetchone()
+    if not inserted:
+        cur.execute(
+            "select id,settlement_status from reward_events where puzzle_id=%s and account_id=%s and settlement_status <> 'VOID' "
+            "order by created_at desc limit 1 for update",(job[0],account_id)
+        )
+        existing=cur.fetchone()
+        return {"verified":True,"already_recorded":True,"reward_id":str(existing[0]) if existing else None,
+                "settlement_status":existing[1] if existing else "REVIEW"}
+    reward_id=inserted[0]
+    record_audit_event(
+        cur,"REWARD_REVIEW_CREATED","reward_event",reward_id,account_id,worker_id,
+        {"job_id":str(job_id),"claim_id":str(claim_id),"worker_share_btc":event["worker_share_btc"],
+         "platform_fee_btc":event["platform_fee_btc"],"settlement_status":"REVIEW","custody":"none"},
+    )
+    return {
+        "verified":True,"reward_id":str(reward_id),
+        "worker_credit_btc":event["worker_share_btc"],
+        "platform_fee_btc":event["platform_fee_btc"],
+        "settlement_status":"REVIEW","withdrawal_queued":False,
+    }
+
+
+@app.post("/jobs/{job_id}/claims")
+def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UUID = Depends(worker_id_from_token)):
+    enforce_rate_limit(request, "write")
+    payload=body.model_dump()
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=worker_idempotency_replay(cur, token_worker_id, request, payload)
+            if replay is not None:
+                return replay
+            expire_stale_assignments(cur)
+            cur.execute(
+                "select a.id,a.worker_id,a.status,j.status,a.started_at from job_assignments a "
+                "join jobs j on j.id=a.job_id join workers w on w.id=a.worker_id "
+                "where a.id=%s and a.job_id=%s and w.id=%s for update",
+                (body.assignment_id, job_id, token_worker_id),
+            )
+            assignment = cur.fetchone()
+            if not assignment: raise HTTPException(404,"Assignment not found")
+            if token_worker_id != body.worker_id or assignment[1] != token_worker_id:
+                raise HTTPException(403,"Worker token does not match claim worker")
+            if assignment[2] != "RUNNING": raise HTTPException(409,"Assignment must be RUNNING before claims are accepted")
+            if assignment[3] not in ("QUEUED","RUNNING"): raise HTTPException(409,"Job is no longer accepting claims")
+            if body.result_status == "VERIFIED":
+                raise HTTPException(403, "VERIFIED claims require a server-side challenge adapter.")
+            # CPU time is an accounting signal, not worker-authoritative proof.
+            # Bound it by server-observed wall time and the worker's declared
+            # thread capacity so a client cannot manufacture arbitrary compute.
+            started_at=assignment[4]
+            if not started_at:
+                raise HTTPException(409, "Assignment has no server start time")
+            elapsed_seconds=max(0,int((datetime.now(timezone.utc)-started_at).total_seconds()))
+            cur.execute("select coalesce(cpu_threads,1) from worker_capabilities where worker_id=%s", (token_worker_id,))
+            capability_row=cur.fetchone()
+            cpu_threads=max(1,int(capability_row[0] if capability_row else 1))
+            server_cpu_ceiling=min(86400, elapsed_seconds*cpu_threads)
+            accepted_cpu_seconds=min(body.cpu_seconds, server_cpu_ceiling)
+
+            cid=uuid4()
+            duplicate=False
+            try:
+                # A savepoint keeps the surrounding idempotency/audit transaction
+                # alive when the database rejects a duplicate candidate.
+                with conn.transaction():
+                    cur.execute(
+                        "insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) "
+                        "values(%s,%s,%s,%s,%s,%s,now())",
+                        (cid,job_id,body.worker_id,body.candidate_hash,body.result_status,accepted_cpu_seconds),
+                    )
+            except psycopg.errors.UniqueViolation:
+                duplicate=True
+
+            if duplicate:
+                cur.execute(
+                    "insert into security_events(id,worker_id,event_type,severity,metadata) "
+                    "values(%s,%s,'DUPLICATE_CLAIM','WARN',%s::jsonb)",
+                    (uuid4(),token_worker_id,json.dumps({"job_id":str(job_id),"candidate_hash":body.candidate_hash})),
+                )
+                raise HTTPException(409, "Duplicate candidate claim")
+
+            record_audit_event(
+                cur,"CLAIM_SUBMITTED","job",job_id,worker_id=token_worker_id,
+                payload={
+                    "assignment_id":str(body.assignment_id),
+                    "candidate_hash":body.candidate_hash,
+                    "result_status":body.result_status,
+                    "cpu_seconds":accepted_cpu_seconds,
+                },
+            )
+            auto_result = auto_credit_verified_claim(cur, job_id, cid, token_worker_id, body.candidate_hash)
+            response={"accepted":True,"claim_id":str(cid),"result_status":body.result_status,
+                      "assignment_id":str(body.assignment_id),"cpu_seconds":accepted_cpu_seconds,
+                      "auto_verification":auto_result}
+            worker_idempotency_store(cur, token_worker_id, request, payload, response)
+            return response
+
+
+@app.get("/audit/job/{job_id}")
+def public_job_audit(job_id: UUID):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select id,puzzle_id,status,created_at,completed_at from jobs where id=%s and scope='public-reward-challenge'", (job_id,))
+            job=cur.fetchone()
+            if not job: raise HTTPException(404,"Job not found")
+            cur.execute("select count(*),coalesce(sum(verified_seconds),0) from job_assignments where job_id=%s and status='COMPLETED'", (job_id,))
+            assignments,seconds=cur.fetchone()
+            cur.execute("select count(*),count(*) filter (where result_status='VERIFIED'),count(*) filter (where result_status='REJECTED') from work_claims where job_id=%s", (job_id,))
+            claims,verified,rejected=cur.fetchone()
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select event_type,entity_type,entity_id,worker_id,payload,previous_hash,event_hash,created_at from audit_events where (entity_type='job' and entity_id=%s) or (entity_type='assignment' and entity_id in (select id::text from job_assignments where job_id=%s)) order by created_at asc,id asc", (str(job_id), job_id))
+            events=cur.fetchall()
+    return {"job_id":str(job[0]),"puzzle_id":job[1],"status":job[2],"created_at":job[3],"completed_at":job[4],
+            "completed_assignments":assignments,"contribution_seconds":seconds,"claims":claims,
+            "verified_claims":verified,"rejected_claims":rejected,
+            "audit_events":[{"event_type":e[0],"entity_type":e[1],"entity_id":e[2],"worker_id":str(e[3]) if e[3] else None,"payload":e[4],"previous_hash":e[5],"event_hash":e[6],"created_at":e[7]} for e in events]}
+
+
+@app.get("/audit/job/{job_id}/verify")
+def verify_job_audit(job_id: UUID):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select event_type,entity_type,entity_id,account_id,worker_id,payload,previous_hash,event_hash "
+                "from audit_events order by audit_sequence asc"
+            )
+            events=cur.fetchall()
+    if not events:
+        return {"valid":True,"events_checked":0,"head_hash":None,"anchored":False}
+    # audit_sequence is the authoritative append order. PostgreSQL now() is
+    # transaction-scoped, so created_at/id ordering can reorder events emitted
+    # inside one transaction and falsely report a broken hash chain.
+    previous=events[0][6]
+    valid_events=0
+    for index,e in enumerate(events):
+        expected_previous = previous if index == 0 else events[index-1][7]
+        canonical=json.dumps({
+            "event_type":e[0],"entity_type":e[1],"entity_id":e[2],
+            "account_id":str(e[3]) if e[3] else None,
+            "worker_id":str(e[4]) if e[4] else None,
+            "payload":e[5],"previous_hash":expected_previous,
+        }, sort_keys=True, separators=(",", ":"), default=str).encode()
+        expected=hashlib.sha256(canonical).hexdigest()
+        if e[6] != expected_previous or e[7] != expected:
+            return {"valid":False,"events_checked":valid_events,"reason":"audit-chain-integrity-failure"}
+        if e[1] == "job" and e[2] == str(job_id):
+            valid_events += 1
+    return {"valid":True,"events_checked":valid_events,"head_hash":events[-1][7],"anchored":bool(events[0][6])}
+
+@app.get("/scheduler/recommendations")
+def scheduler_recommendations(limit: int = 10):
+    limit = max(1, min(limit, 50))
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select j.id,j.puzzle_id,c.title,c.reward_btc,c.balance_btc,c.status,"
+                "coalesce(o.estimated_seconds,0),coalesce(o.estimated_difficulty,0) "
+                "from jobs j join challenge_registry c on c.id=j.puzzle_id "
+                "left join lateral (select estimated_seconds,estimated_difficulty from challenge_offers "
+                "where challenge_id=c.id and status='PUBLISHED' order by published_at desc nulls last,created_at desc limit 1) o on true "
+                "where j.scope='public-reward-challenge' and j.status='QUEUED' and c.status='OPEN + FUNDED' and c.balance_btc > 0 "
+                "and coalesce(c.verification->>'execution_mode','RESEARCH')='COMPUTE' and coalesce(c.verification->>'adapter_runnable','false')='true' "
+                "order by c.balance_btc desc limit %s", (limit * 3,))
+            rows = cur.fetchall()
+            recommendations = []
+            for job_id,puzzle_id,title,reward,balance,status,estimated_seconds,difficulty in rows:
+                seconds = int(estimated_seconds or 0)
+                if seconds <= 0:
+                    seconds = max(3600, int(float(difficulty or 1) * 3600))
+                cur.execute(
+                    "select count(*) filter (where result_status='VERIFIED'), count(*) "
+                    "from work_claims where job_id=%s and finished_at > now() - interval '30 days'",
+                    (job_id,)
+                )
+                verified_claims, recent_claims = cur.fetchone()
+                success_probability = (verified_claims / recent_claims) if recent_claims else 0.01
+                score = economic_priority(float(balance), seconds, success_probability, 1.0)
+                reason = {
+                    "estimated_success_probability": round(success_probability, 8),
+                    "verified_claims_30d": verified_claims,
+                    "claims_30d": recent_claims,
+                    "estimated_worker_seconds": seconds,
+                    "funded_balance_btc": float(balance),
+                    "policy": "expected_reward_per_worker_hour"
+                }
+                cur.execute(
+                    "select 1 from scheduler_decisions where job_id=%s and created_at > now() - interval '5 minutes' limit 1",
+                    (job_id,)
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        "insert into scheduler_decisions(id,job_id,score,reason) values(%s,%s,%s,%s::jsonb)",
+                        (uuid4(), job_id, score, json.dumps(reason))
+                    )
+                recommendations.append({
+                    "job_id": str(job_id),
+                    "puzzle_id": puzzle_id,
+                    "title": title,
+                    "funded_balance_btc": float(balance),
+                    "estimated_worker_seconds": seconds,
+                    "priority_score": score,
+                    "reason": reason
+                })
+            recommendations.sort(key=lambda x: x["priority_score"], reverse=True)
+            return {"recommendations": recommendations[:limit]}
+
+
+class WithdrawalComplete(BaseModel):
+    external_reference: str = Field(min_length=3, max_length=200)
+
+
+@app.get("/admin/withdrawals")
+def list_withdrawals(request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute("""
+                select id,account_id,amount_btc,payout_address,status,external_reference,created_at,processed_at
+                from withdrawal_requests
+                where status in ('QUEUED','PROCESSING')
+                order by created_at asc
+                limit 100
+            """)
+            rows=cur.fetchall()
+    return {"withdrawals":[
+        {"id":str(r[0]),"account_id":str(r[1]),"amount_btc":float(r[2]),"payout_address":r[3],
+         "status":r[4],"external_reference":r[5],"created_at":r[6],"processed_at":r[7]}
+        for r in rows
+    ]}
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/processing")
+def start_withdrawal_processing(withdrawal_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    payload={"withdrawal_id":str(withdrawal_id)}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute(
+                "update withdrawal_requests set status='PROCESSING' where id=%s and status='QUEUED' returning account_id,amount_btc,payout_address",
+                (withdrawal_id,),
+            )
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(409,"Withdrawal is not queued")
+            record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",withdrawal_id,account_id,
+                payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),"payout_address_present":True,"custody":"none"})
+            response={"withdrawal_id":str(withdrawal_id),"status":"PROCESSING","custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+
+@app.post("/admin/withdrawals/{withdrawal_id}/complete")
+def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    enforce_rate_limit(request, "write")
+    if not validate_external_txid(body.external_reference):
+        raise HTTPException(422, "external_reference must be a 64-character Bitcoin transaction id")
+    payload={"withdrawal_id":str(withdrawal_id),"external_reference":body.external_reference}
+    with db() as conn:
+        with conn.cursor() as cur:
+            replay=idempotency_replay(cur, account_id, request, payload)
+            if replay is not None:
+                return replay
+            require_owner(cur, account_id)
+            cur.execute(
+                "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
+                "where id=%s and status in ('QUEUED','PROCESSING') returning account_id,amount_btc",
+                (body.external_reference.strip(),withdrawal_id),
+            )
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(409,"Withdrawal is not queued or processing")
+            record_audit_event(
+                cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,account_id,
+                payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),
+                         "external_reference":body.external_reference.strip(),"custody":"none"},
+            )
+            response={"withdrawal_id":str(withdrawal_id),"status":"PAID",
+                      "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
+            idempotency_store(cur, account_id, request, payload, response)
+            return response
+
+
+@app.post("/internal/payouts/next")
+def payout_worker_next(request: Request):
+    require_payout_worker(request)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select pg_advisory_xact_lock(58392017)")
+            cur.execute(
+                "select id,account_id,amount_btc,payout_address,status from withdrawal_requests "
+                "where status='QUEUED' or (status='PROCESSING' and processed_at is null and created_at < now() - (%s || ' minutes')::interval) "
+                "order by created_at asc limit 1 for update skip locked",
+                (PAYOUT_RETRY_AFTER_MINUTES,),
+            )
+            row=cur.fetchone()
+            if not row:
+                return {"withdrawal":None}
+            wid,account_id,amount,address,status=row
+            amount=Decimal(str(amount))
+            if amount > MAX_SINGLE_PAYOUT_BTC:
+                record_audit_event(cur,"WITHDRAWAL_BLOCKED","withdrawal",wid,account_id,
+                    payload={"reason":"MAX_SINGLE_PAYOUT_BTC","amount_btc":str(amount),"limit_btc":str(MAX_SINGLE_PAYOUT_BTC)})
+                cur.execute("update withdrawal_requests set status='FAILED',processed_at=now() where id=%s and status in ('QUEUED','PROCESSING')",(wid,))
+                return {"withdrawal":None,"blocked":"MAX_SINGLE_PAYOUT_BTC","withdrawal_id":str(wid)}
+            cur.execute(
+                "select coalesce(sum(amount_btc),0) from withdrawal_requests "
+                "where status='PAID' and processed_at >= current_date",
+            )
+            paid_today=Decimal(str(cur.fetchone()[0] or 0))
+            if paid_today + amount > MAX_DAILY_PAYOUT_BTC:
+                record_audit_event(cur,"WITHDRAWAL_BLOCKED","withdrawal",wid,account_id,
+                    payload={"reason":"MAX_DAILY_PAYOUT_BTC","amount_btc":str(amount),
+                             "paid_today_btc":str(paid_today),"limit_btc":str(MAX_DAILY_PAYOUT_BTC)})
+                return {"withdrawal":None,"blocked":"MAX_DAILY_PAYOUT_BTC","withdrawal_id":str(wid)}
+            cur.execute(
+                "update withdrawal_requests set status='PROCESSING' where id=%s and status in ('QUEUED','PROCESSING') returning id",
+                (wid,),
+            )
+            if cur.rowcount != 1:
+                return {"withdrawal":None}
+            record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",wid,account_id,
+                payload={"amount_btc":str(amount),"payout_address_present":True,
+                         "max_single_btc":str(MAX_SINGLE_PAYOUT_BTC),"max_daily_btc":str(MAX_DAILY_PAYOUT_BTC),
+                         "custody":"none"})
+            return {"withdrawal":{"id":str(wid),"account_id":str(account_id),"amount_btc":float(amount),
+                                  "payout_address":address,"status":"PROCESSING","idempotency_key":str(wid)}}
+
+
+@app.post("/internal/payouts/{withdrawal_id}/complete")
+def payout_worker_complete(withdrawal_id: UUID, body: WithdrawalComplete, request: Request):
+    require_payout_worker(request)
+    if not validate_external_txid(body.external_reference):
+        raise HTTPException(422, "external_reference must be a 64-character Bitcoin transaction id")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() "
+                "where id=%s and status='PROCESSING' returning account_id,amount_btc",
+                (body.external_reference.strip(),withdrawal_id),
+            )
+            row=cur.fetchone()
+            if not row:
+                raise HTTPException(409,"Withdrawal is not processing")
+            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,row[0],
+                payload={"amount_btc":str(row[1]),"external_reference":body.external_reference.strip(),"custody":"none"})
+            return {"withdrawal_id":str(withdrawal_id),"status":"PAID",
+                    "external_reference":body.external_reference.strip(),"custody":"non-custodial"}
+
+
+@app.get("/network/economics")
+def network_economics():
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from workers where status='ACTIVE'")
+            active_workers = cur.fetchone()[0]
+            cur.execute("select count(*) from job_assignments where status in ('ASSIGNED','RUNNING')")
+            active_assignments = cur.fetchone()[0]
+            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where period_start=current_date")
+            daily_seconds = int(cur.fetchone()[0] or 0)
+            cur.execute("select count(*) from jobs where status='QUEUED' and scope='public-reward-challenge'")
+            queued_jobs = cur.fetchone()[0]
+            cur.execute("select count(*) from challenge_registry where status='OPEN + FUNDED' and balance_btc > 0")
+            funded_challenges = cur.fetchone()[0]
+    return {
+        "active_workers": active_workers,
+        "active_assignments": active_assignments,
+        "daily_worker_hours": round(daily_seconds / 3600, 4),
+        "queued_jobs": queued_jobs,
+        "funded_challenges": funded_challenges,
+        "allocation_policy": {
+            "max_active_assignments": MAX_ACTIVE_ASSIGNMENTS,
+            "max_active_assignments_per_job": MAX_ACTIVE_ASSIGNMENTS_PER_JOB,
+            "max_network_worker_hours_per_day": MAX_NETWORK_WORKER_HOURS_PER_DAY,
+            "compute_location": "worker_device",
+            "platform_compute_payout_obligation": "none_without_verified_reward"
+        }
+    }
+
+@app.get("/audit/account")
+def audit_account(account_id: UUID = Depends(account_id_from_auth)):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("select count(*) from workers where account_id=%s",(account_id,))
+            workers=cur.fetchone()[0]
+            cur.execute("select coalesce(sum(seconds_verified),0) from worker_hours where account_id=%s",(account_id,))
+            seconds=cur.fetchone()[0]
+            cur.execute("select count(*) from reward_events where account_id=%s and settlement_status in ('APPROVED','SETTLED')",(account_id,))
+            rewards=cur.fetchone()[0]
+            cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='VERIFIED'",(account_id,))
+            verified_claims=cur.fetchone()[0]
+            cur.execute("select count(*) from work_claims c join workers w on w.id=c.worker_id where w.account_id=%s and c.result_status='REJECTED'",(account_id,))
+            rejected_claims=cur.fetchone()[0]
+    reliability=round((verified_claims/(verified_claims+rejected_claims))*100,2) if verified_claims+rejected_claims else 0.0
+    return {"workers":workers,"contributed_worker_seconds":seconds,"approved_reward_events":rewards,"verified_claims":verified_claims,"rejected_claims":rejected_claims,"reliability_score":reliability}
+
+
+@app.post("/jobs/{job_id}/verify")
+def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
+    """Run the registered server-side adapter and create a REVIEW reward event."""
+    enforce_rate_limit(request, "write")
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select j.id,j.status from jobs j where j.id=%s and j.scope='public-reward-challenge' for update",
+                (job_id,),
+            )
+            job=cur.fetchone()
+            if not job:
+                raise HTTPException(404,"Job not found")
+            if job[1] not in ("COMPLETED","RUNNING"):
+                raise HTTPException(409,f"Job is {job[1]}")
+            cur.execute(
+                "select c.id,c.worker_id,c.candidate_hash,w.account_id "
+                "from work_claims c join workers w on w.id=c.worker_id "
+                "where c.job_id=%s and c.result_status='TESTED' and w.account_id=%s "
+                "order by c.finished_at asc for update",
+                (job_id,account_id),
+            )
+            claims=cur.fetchall()
+            if not claims:
+                raise HTTPException(404,"No TESTED claim is available for this account")
+            for claim_id,worker_id,candidate_hash,claimant_account in claims:
+                if claimant_account != account_id:
+                    raise HTTPException(403,"Verified claim account mismatch")
+                result=auto_credit_verified_claim(cur,job_id,claim_id,worker_id,candidate_hash)
+                if result and result.get("verified"):
+                    return {
+                        "verified":True,"claim_id":str(claim_id),"candidate_hash":candidate_hash,
+                        "reward_status":result.get("settlement_status","REVIEW"),
+                        "reward_id":result.get("reward_id"),
+                        "worker_credit_btc":result.get("worker_credit_btc"),
+                        "platform_fee_btc":result.get("platform_fee_btc"),
+                        "withdrawal_queued":False,
+                    }
+            raise HTTPException(422,"All submitted candidates were rejected by the challenge adapter.")
+
+
+class RewardApprovalRequest(BaseModel):
+    reward_id: UUID
+
+
 @app.post("/admin/rewards/{reward_id}/approve")
 def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
     """Owner-only settlement gate: REVIEW -> APPROVED, then credit the worker balance."""
@@ -1539,97 +2333,6 @@ def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends
             idempotency_store(cur,account_id,request,payload,response)
             return response
 
-
-class WithdrawalComplete(BaseModel):
-    external_reference: str = Field(min_length=64, max_length=200)
-
-@app.get("/admin/withdrawals")
-def list_withdrawals(request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    with db() as conn:
-        with conn.cursor() as cur:
-            require_owner(cur, account_id)
-            cur.execute("select id,account_id,amount_btc,payout_address,status,external_reference,created_at,processed_at from withdrawal_requests where status in ('QUEUED','PROCESSING') order by created_at asc limit 100")
-            rows=cur.fetchall()
-    return {"withdrawals":[{"id":str(r[0]),"account_id":str(r[1]),"amount_btc":float(r[2]),"payout_address":r[3],"status":r[4],"external_reference":r[5],"created_at":r[6],"processed_at":r[7]} for r in rows]}
-
-@app.post("/admin/withdrawals/{withdrawal_id}/processing")
-def start_withdrawal_processing(withdrawal_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    payload={"withdrawal_id":str(withdrawal_id)}
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay=idempotency_replay(cur, account_id, request, payload)
-            if replay is not None: return replay
-            require_owner(cur, account_id)
-            cur.execute("update withdrawal_requests set status='PROCESSING',processed_at=now() where id=%s and status='QUEUED' returning account_id,amount_btc,payout_address",(withdrawal_id,))
-            row=cur.fetchone()
-            if not row: raise HTTPException(409,"Withdrawal is not queued")
-            record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",withdrawal_id,account_id,payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),"custody":"none"})
-            response={"withdrawal_id":str(withdrawal_id),"status":"PROCESSING","custody":"non-custodial"}
-            idempotency_store(cur,account_id,request,payload,response)
-            return response
-
-@app.post("/admin/withdrawals/{withdrawal_id}/complete")
-def complete_withdrawal(withdrawal_id: UUID, body: WithdrawalComplete, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    enforce_rate_limit(request, "write")
-    payload={"withdrawal_id":str(withdrawal_id),"external_reference":body.external_reference}
-    with db() as conn:
-        with conn.cursor() as cur:
-            replay=idempotency_replay(cur, account_id, request, payload)
-            if replay is not None: return replay
-            require_owner(cur,account_id)
-            if not validate_external_txid(body.external_reference): raise HTTPException(422,"Invalid external Bitcoin transaction id")
-            cur.execute("update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() where id=%s and status='PROCESSING' returning account_id,amount_btc",(body.external_reference,withdrawal_id))
-            row=cur.fetchone()
-            if not row: raise HTTPException(409,"Withdrawal is not PROCESSING")
-            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,account_id,payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),"txid_present":True,"custody":"none"})
-            response={"withdrawal_id":str(withdrawal_id),"status":"PAID","external_reference":body.external_reference,"custody":"non-custodial"}
-            idempotency_store(cur,account_id,request,payload,response)
-            return response
-
-@app.post("/internal/payouts/next")
-def payout_next(request: Request):
-    enforce_rate_limit(request,"write")
-    require_payout_worker(request)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("select coalesce(sum(amount_btc),0) from withdrawal_requests where status='PAID' and processed_at >= current_date")
-            paid_today=Decimal(str(cur.fetchone()[0] or 0))
-            if paid_today >= MAX_DAILY_PAYOUT_BTC: return {"withdrawal":None,"reason":"daily_payout_limit"}
-            cur.execute("""select id,account_id,amount_btc,payout_address from withdrawal_requests
-                           where status='QUEUED' or (status='PROCESSING' and processed_at < now() - (%s || ' minutes')::interval)
-                           order by created_at asc limit 1 for update skip locked""",(PAYOUT_RETRY_AFTER_MINUTES,))
-            row=cur.fetchone()
-            if not row: return {"withdrawal":None}
-            wid,account_id,amount,address=row
-            amount=Decimal(str(amount))
-            if amount > MAX_SINGLE_PAYOUT_BTC:
-                cur.execute("update withdrawal_requests set status='FAILED',processed_at=now() where id=%s and status in ('QUEUED','PROCESSING')",(wid,))
-                record_audit_event(cur,"WITHDRAWAL_FAILED","withdrawal",wid,None,payload={"reason":"single_payout_limit","amount_btc":str(amount)})
-                return {"withdrawal":None,"reason":"single_payout_limit"}
-            cur.execute("update withdrawal_requests set status='PROCESSING',processed_at=now() where id=%s and status in ('QUEUED','PROCESSING') returning id",(wid,))
-            if cur.rowcount != 1: return {"withdrawal":None}
-            record_audit_event(cur,"WITHDRAWAL_WORKER_CLAIMED","withdrawal",wid,None,payload={"amount_btc":str(amount),"custody":"none"})
-            return {"withdrawal":{"id":str(wid),"account_id":str(account_id),"amount_btc":float(amount),"payout_address":address,"status":"PROCESSING","idempotency_key":"withdrawal:"+str(wid)}}
-
-@app.post("/internal/payouts/{withdrawal_id}/complete")
-def payout_complete(withdrawal_id: UUID, body: WithdrawalComplete, request: Request):
-    enforce_rate_limit(request,"write")
-    require_payout_worker(request)
-    if not validate_external_txid(body.external_reference): raise HTTPException(422,"Invalid external Bitcoin transaction id")
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("update withdrawal_requests set status='PAID',external_reference=%s,processed_at=now() where id=%s and status='PROCESSING' returning account_id,amount_btc",(body.external_reference,withdrawal_id))
-            row=cur.fetchone()
-            if not row:
-                cur.execute("select status,external_reference from withdrawal_requests where id=%s",(withdrawal_id,))
-                current=cur.fetchone()
-                if current and current[0]=='PAID' and current[1]==body.external_reference:
-                    return {"withdrawal_id":str(withdrawal_id),"status":"PAID","external_reference":body.external_reference}
-                raise HTTPException(409,"Withdrawal is not PROCESSING")
-            record_audit_event(cur,"WITHDRAWAL_PAID","withdrawal",withdrawal_id,None,payload={"beneficiary_account":str(row[0]),"amount_btc":str(row[1]),"txid_present":True,"custody":"none"})
-            return {"withdrawal_id":str(withdrawal_id),"status":"PAID","external_reference":body.external_reference,"custody":"non-custodial"}
 
 class PayoutAddressUpdate(BaseModel):
     btc_payout_address: str = Field(min_length=14, max_length=128)
