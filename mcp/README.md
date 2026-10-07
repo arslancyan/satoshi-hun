@@ -1,0 +1,61 @@
+# Satoshi Hunt — ChatGPT Worker Control
+
+This directory defines the least-privilege MCP contract for connecting a Satoshi Hunt worker account to ChatGPT.
+
+## Scope
+
+ChatGPT is a **worker operator**, never an administrator. The MCP layer must authorize every request against the connected Satoshi Hunt account and expose only worker-scoped tools.
+
+### Read tools
+- satoshi_status — worker/account connection status.
+- list_live_puzzles — live marketplace puzzles and queue eligibility.
+- get_puzzle — one puzzle state, telemetry and adapter provenance.
+- get_worker_status — connected worker status and active assignment.
+- get_worker_jobs — assignments visible to the connected worker.
+- get_telemetry — measured worker/challenge telemetry.
+- get_reward_status — worker reward balance and withdrawal status.
+- rank_puzzles — current adaptive ranking.
+- check_queue_eligibility — server-side queue gate result.
+
+### Control tools
+- run_puzzle — start/switch to one eligible puzzle.
+- pause_puzzle — pause the current assignment.
+- stop_puzzle — stop the current assignment.
+- switch_puzzle — atomically pause the current puzzle and run another eligible puzzle.
+- restart_worker — restart the worker process/control lease only.
+
+## Hard security boundary
+
+The MCP layer must reject requests for admin operations, challenge registry mutation, funding or payout configuration, arbitrary database access, private keys/seed phrases/wallet credentials, research-only or unaudited adapters, and challenges that fail the centralized queue gate.
+
+run_puzzle and switch_puzzle must call the same centralized challenge_registry_policy.queue_gate() used by the normal worker queue. MCP must never implement a second eligibility policy.
+
+## Browser worker behavior
+
+The Satoshi Hunt browser account page remains open. ChatGPT does not execute heavy computation inside the ChatGPT conversation. It only changes the worker assignment/control state through the Satoshi Hunt API.
+
+The browser worker UI continues polling/heartbeating its assignment. If the browser is closed, the normal heartbeat timeout/recovery rules apply; ChatGPT cannot keep a browser process alive after the user closes it.
+
+## Authentication
+
+The production MCP connector must use OAuth 2.1 with a dedicated worker-control scope. Do not ask users to paste a Satoshi Hunt session token or worker token into ChatGPT. OAuth is the recommended authentication model for authenticated MCP write actions.
+
+Recommended scopes: worker:read and worker:control. No admin scope is exposed by this connector.
+
+## Tool annotations
+
+Read tools: readOnlyHint=true, destructiveHint=false, openWorldHint=false.
+
+run_puzzle: readOnlyHint=false, destructiveHint=false, openWorldHint=false.
+
+pause_puzzle, stop_puzzle, switch_puzzle, restart_worker: readOnlyHint=false, destructiveHint=true, openWorldHint=false.
+
+The annotations are hints only; authorization and queue validation remain server-side requirements.
+
+## Connection UX
+
+The Account page contains a CHATGPT · WORKER CONTROL section. It explains the permission boundary and links to the connection instructions. The actual OAuth linking UI is provided by ChatGPT when the MCP connector advertises the OAuth metadata.
+
+## Implementation target
+
+Expose a remote Streamable HTTP MCP endpoint at /mcp. The MCP service should call the existing Satoshi Hunt API over HTTPS, never connect directly to PostgreSQL. This preserves the existing API authorization, account-level one-active-puzzle lock, audit trail and queue gate.
