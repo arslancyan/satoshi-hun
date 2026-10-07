@@ -5,37 +5,29 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: satoshi-hunt-production
+  group: satoshi-hunt-production-health
   cancel-in-progress: true
 
 jobs:
-  verify-production-deployment:
+  verify-production:
     runs-on: ubuntu-latest
     environment:
       name: production
       url: https://satoshi-hunt-api-production.up.railway.app
     steps:
-      - name: Require Railway deployment credential
+      - name: Verify production health
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          API: https://satoshi-hunt-api-production.up.railway.app
         run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "::error::RAILWAY_TOKEN is not configured for the production environment."
-            exit 1
-          fi
-          echo "Railway deployment credential is configured."
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Verify Railway project access
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway whoami
-
-      - name: Verify production service
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: |
-          railway status
-          echo "Production deployment gate reached successfully."
+          for i in {1..30}; do
+            if curl -fsS "$API/health" >/tmp/health.json; then
+              cat /tmp/health.json
+              curl -fsS "$API/ready"
+              echo
+              echo "Production health gate passed."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Production health gate timed out."
+          exit 1
