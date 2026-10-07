@@ -81,8 +81,11 @@ def audit_adapter(spec: AdapterSpec) -> list[str]:
                                 f"test vector mismatch for {algorithm}:{message}: "
                                 f"{result} != {expected}"
                             )
-                    elif {"challenge", "difficulty_bits", "max_nonce"} <= set(vector):
-                        challenge = str(vector["challenge"])
+                    elif (
+                        {"challenge", "difficulty_bits", "max_nonce"} <= set(vector)
+                        or {"challenge_id", "difficulty_bits", "max_nonce"} <= set(vector)
+                    ):
+                        challenge = str(vector.get("challenge", vector.get("challenge_id")))
                         difficulty = int(vector["difficulty_bits"])
                         max_nonce = int(vector["max_nonce"])
                         if max_nonce < 0 or max_nonce > 10_000_000:
