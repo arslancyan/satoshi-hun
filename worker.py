@@ -134,10 +134,22 @@ async def run_assignment(assignment):
         challenge = next((x for x in challenge_feed.get("challenges", []) if x.get("challenge_id") == puzzle_id), None)
         if not challenge:
             raise RuntimeError("Assigned challenge is no longer present in the verified live registry")
+        verification = challenge.get("verification") or {}
+        # Defense in depth: the API queue gate is authoritative, but the worker
+        # must independently refuse research-only or unaudited assignments.
+        if (
+            challenge.get("rules") != "public-reward-challenge"
+            or challenge.get("status") != "OPEN + FUNDED"
+            or verification.get("execution_mode") != "COMPUTE"
+            or verification.get("adapter_audited") is not True
+            or verification.get("adapter_runnable") is not True
+            or not verification.get("adapter_id")
+        ):
+            raise RuntimeError("Challenge is not backed by an audited runnable compute adapter")
         if challenge.get("challenge_type") != "hash-collision":
             raise RuntimeError(f"No real solver is registered for challenge type {challenge.get('challenge_type')!r}")
 
-        allowed = (challenge.get("verification") or {}).get("allowed_algorithms") or []
+        allowed = verification.get("allowed_algorithms") or []
         requested = os.environ.get("SATOSHI_HUNT_ALGORITHM", "").strip().lower()
         algorithm = requested if requested in allowed else (str(allowed[0]).lower() if allowed else "")
         if algorithm not in {"sha256", "ripemd160", "hash160", "hash256"}:
@@ -270,7 +282,16 @@ async def handler(ws):
             and isinstance(verification, dict)
             and all(str(verification.get(k, "")).strip() for k in ("method", "source_id", "checked_at", "fingerprint"))
         )
-        if p.get("status") != "OPEN + FUNDED" or p.get("rules") != "public-reward-challenge" or not metadata_ok:
+        verification = verification if isinstance(verification, dict) else {}
+        if (
+            p.get("status") != "OPEN + FUNDED"
+            or p.get("rules") != "public-reward-challenge"
+            or not metadata_ok
+            or verification.get("execution_mode") != "COMPUTE"
+            or verification.get("adapter_audited") is not True
+            or verification.get("adapter_runnable") is not True
+            or not verification.get("adapter_id")
+        ):
             await ws.send(json.dumps({
                 "type": "result",
                 "message": f"#{pid} rejected: challenge is not fully verified for local work."
