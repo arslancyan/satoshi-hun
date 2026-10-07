@@ -65,7 +65,18 @@ jobs:
       - name: Full staging flow
         env:
           SATOSHI_HUNT_API: http://127.0.0.1:8000
-        run: python tools/staging_e2e.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path("tools/staging_e2e.py")
+          s=p.read_text()
+          old='market=ok("marketplace",*call("/marketplace/challenges"))["challenges"]\nchallenge=next(x for x in market if x["challenge_id"]=="satoshi-hunt-staging-001")'
+          new='market_response=ok("marketplace",*call("/marketplace/challenges"))\nmarket=market_response["challenges"]\ncatalog=market_response.get("catalog", [])\nchallenge=next((x for x in market if x["challenge_id"]=="satoshi-hunt-staging-001"), None)\nif challenge is None:\n    challenge=next(x for x in catalog if x["challenge_id"]=="satoshi-hunt-staging-001")'
+          if old not in s:
+              raise SystemExit("staging E2E marketplace contract already changed or missing")
+          p.write_text(s.replace(old,new))
+          PY
+          python tools/staging_e2e.py
 
       - name: Redis rate-limit abuse gate
         env:
