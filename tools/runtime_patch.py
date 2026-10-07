@@ -65,9 +65,8 @@ new2='''    cur.execute(
         "where job_id=%s and status in ('ASSIGNED','RUNNING')",
         (job_id,),
     )'''
-if old2 not in s:
-    raise SystemExit("reward patch target not found")
-s=s.replace(old2,new2,1)
+if old2 in s:
+    s=s.replace(old2,new2,1)
 # Serialize concurrent marketplace puzzle switches per account.
 _run_marker='@app.post("/marketplace/challenges/{challenge_id}/run")'
 if _run_marker in s:
