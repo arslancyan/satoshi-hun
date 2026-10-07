@@ -122,6 +122,37 @@ def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = De
 p.write_text(s)
 
 
+# Audit-chain ordering migration. PostgreSQL now() is transaction-scoped, so timestamp/id
+# ordering is not a safe append order when several audit events are emitted in
+# one transaction. Persist a monotonic sequence and repair legacy rows by their
+# existing previous_hash links before new events use the sequence.
+if _db:
+    with psycopg.connect(_db) as conn:
+        with conn.cursor() as cur:
+            cur.execute("alter table audit_events add column if not exists audit_sequence bigserial")
+            cur.execute("create unique index if not exists uq_audit_events_sequence on audit_events(audit_sequence)")
+            cur.execute("select id,event_hash,previous_hash from audit_events order by audit_sequence asc")
+            rows=cur.fetchall()
+            if rows:
+                by_previous={row[2]: row for row in rows if row[2]}
+                by_hash={row[1]: row for row in rows}
+                roots=[row for row in rows if not row[2] or row[2] not in by_hash]
+                if len(roots) == 1:
+                    ordered=[]
+                    current=roots[0]
+                    seen=set()
+                    while current and current[0] not in seen:
+                        seen.add(current[0])
+                        ordered.append(current)
+                        current=by_previous.get(current[1])
+                    if len(ordered) == len(rows):
+                        n=len(ordered)
+                        for position,row in enumerate(ordered):
+                            cur.execute(
+                                "update audit_events set audit_sequence=%s where id=%s",
+                                (position - n, row[0]),
+                            )
+
 # Ensure paused-assignment schema exists on existing production databases.
 import psycopg
 from os import environ
