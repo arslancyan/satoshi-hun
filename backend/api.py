@@ -1573,6 +1573,61 @@ def ingest_challenge(body: ChallengeIngest, request: Request, x_challenge_ingest
 
 
 
+@app.get("/admin/workers/live")
+def admin_live_workers(account_id: UUID = Depends(account_id_from_auth)):
+    """Owner-only operational view of workers actually leased to active assignments."""
+    with db() as conn:
+        with conn.cursor() as cur:
+            require_owner(cur, account_id)
+            cur.execute(
+                """
+                select
+                    a.id,
+                    a.job_id,
+                    a.worker_id,
+                    w.account_id,
+                    w.label,
+                    a.status,
+                    a.assigned_at,
+                    a.started_at,
+                    a.last_heartbeat_at,
+                    extract(epoch from (now() - a.last_heartbeat_at)) as heartbeat_age_seconds,
+                    j.puzzle_id,
+                    j.status as job_status
+                from job_assignments a
+                join workers w on w.id=a.worker_id
+                join jobs j on j.id=a.job_id
+                where a.status='RUNNING'
+                order by a.started_at asc nulls last
+                """
+            )
+            rows=cur.fetchall()
+    workers=[]
+    for r in rows:
+        heartbeat_age = None if r[9] is None else float(r[9])
+        workers.append({
+            "assignment_id": str(r[0]),
+            "job_id": str(r[1]),
+            "worker_id": str(r[2]),
+            "account_id": str(r[3]),
+            "worker_label": r[4],
+            "assignment_status": r[5],
+            "assigned_at": r[6],
+            "started_at": r[7],
+            "last_heartbeat_at": r[8],
+            "heartbeat_age_seconds": heartbeat_age,
+            "heartbeat_healthy": heartbeat_age is not None and heartbeat_age <= 45,
+            "puzzle_id": r[10],
+            "job_status": r[11],
+        })
+    return {
+        "active_workers": sum(1 for x in workers if x["heartbeat_healthy"]),
+        "running_assignments": len(workers),
+        "workers": workers,
+        "checked_at": datetime.now(timezone.utc),
+    }
+
+
 @app.get("/admin/rewards")
 def admin_rewards(account_id: UUID = Depends(account_id_from_auth)):
     with db() as conn:
