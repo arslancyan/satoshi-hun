@@ -287,23 +287,23 @@ def issue_mcp_worker_session(body: MCPIdentityRequest, request: Request):
         MCP_INTERNAL_SECRET,
     ):
         raise HTTPException(404, "Not found")
-    account_id = None
-    try:
-        account_id = UUID(body.subject)
-    except ValueError:
-        account_id = None
+    issuer = request.headers.get("x-mcp-oauth-issuer", "").strip()
+    if not issuer:
+        raise HTTPException(403, "MCP OAuth issuer is required")
     with db() as conn:
         with conn.cursor() as cur:
-            if account_id is not None:
-                cur.execute("select id from accounts where id=%s", (account_id,))
-            elif body.email:
-                cur.execute("select id from accounts where email=%s", (body.email.lower().strip(),))
-            else:
-                cur.execute("select id from accounts where email=%s", ("",))
+            cur.execute(
+                "select account_id from mcp_oauth_identities where issuer=%s and subject=%s",
+                (issuer, body.subject),
+            )
             row = cur.fetchone()
-    if not row:
-        raise HTTPException(403, "MCP identity is not linked to a Satoshi Hunt account")
-    return {"session": issue_session(row[0]), "expires_in": SESSION_TTL, "scope": "worker:read worker:control"}
+            if not row:
+                raise HTTPException(403, "MCP identity is not linked to a Satoshi Hunt account")
+            cur.execute("select id from accounts where id=%s", (row[0],))
+            account = cur.fetchone()
+    if not account:
+        raise HTTPException(403, "Linked Satoshi Hunt account no longer exists")
+    return {"session": issue_session(account[0]), "expires_in": SESSION_TTL, "scope": "worker:read worker:control"}
 
 
 class LinkRequest(BaseModel):
