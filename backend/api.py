@@ -740,16 +740,20 @@ def marketplace():
                             and coalesce((verification->>'adapter_runnable'),'false')='true'
                           ) as queue_eligible
                    from challenge_registry
-                   where status='OPEN + FUNDED'
-                     and balance_btc > 0
-                     and funding_match = true
-                     and verification_stale = false
-                     and coalesce((payout->>'permissionless'),'false')='true'
-                     and coalesce((payout->>'automatic_chain_claim'),'false')='true'
+                   where status is not null
                    order by
-                     case coalesce(search_metrics->>'strategy_action','RESEARCH')
-                       when 'RUN' then 0
-                       when 'PAUSE' then 1
+                     case
+                       when status='OPEN + FUNDED'
+                        and balance_btc > 0
+                        and funding_match = true
+                        and verification_stale = false
+                        and coalesce((payout->>'permissionless'),'false')='true'
+                        and coalesce((payout->>'automatic_chain_claim'),'false')='true'
+                        and coalesce((verification->>'execution_mode'),'RESEARCH')='COMPUTE'
+                        and coalesce((verification->>'adapter_audited'),'false')='true'
+                        and coalesce((verification->>'adapter_runnable'),'false')='true'
+                       then 0
+                       when status='OPEN + FUNDED' then 1
                        else 2
                      end,
                      coalesce((search_metrics->>'opportunity_score')::double precision,0) desc,
@@ -763,8 +767,17 @@ def marketplace():
                   "advertised_reward_btc","verified_balance_btc","funding_match","verification_stale","last_live_check_error","search_metrics","expected_value_score","queue_eligible"]
             rows=[dict(zip(keys,x)) for x in cur.fetchall()]
             for row in rows:
-                row["selected"]=False
-            return {"challenges":rows,"offers":rows}
+                queue_eligible = bool(row.get("queue_eligible"))
+                row["runnable"] = queue_eligible
+                row["selected"] = False
+                if queue_eligible:
+                    row["market_status"] = "LIVE · RUNNABLE"
+                elif row.get("status") == "OPEN + FUNDED":
+                    row["market_status"] = "FUNDED · NOT RUNNABLE"
+                else:
+                    row["market_status"] = "RESEARCH · WATCH"
+            runnable = [row for row in rows if row["runnable"]]
+            return {"challenges":runnable,"catalog":rows,"offers":rows}
 
 
 @app.get("/marketplace/challenges/{challenge_id}")
