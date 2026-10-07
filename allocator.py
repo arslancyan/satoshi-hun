@@ -38,23 +38,35 @@ def allocate_weighted_ranges(start: int, end: int, workers):
         key=lambda w: (float(w.get("score", 1.0)), str(w.get("id", ""))),
         reverse=True,
     )
-    count = min(len(ordered), end - start)
+    capacity = end - start
+    count = min(len(ordered), capacity)
     ordered = ordered[:count]
+
     weights = [max(0.1, float(w.get("score", 1.0))) for w in ordered]
-    total = end - start
-    base = total // count
-    extra = total % count
+    total_weight = sum(weights)
+    remaining = capacity - count
+    raw_extra = [
+        (remaining * weight / total_weight) if total_weight else 0.0
+        for weight in weights
+    ]
+    extras = [int(value) for value in raw_extra]
+    leftover = remaining - sum(extras)
+
+    order = sorted(
+        range(count),
+        key=lambda i: (raw_extra[i] - extras[i], str(ordered[i]["id"])),
+        reverse=True,
+    )
+    for i in order[:leftover]:
+        extras[i] += 1
+
     ranges = []
     cursor = start
-    for i, (worker, weight) in enumerate(zip(ordered, weights)):
-        remaining = count - i - 1
-        target = base + (1 if i < extra else 0)
-        if i < count - 1:
-            weighted = max(1, round(total * weight / sum(weights)))
-            target = min(max(1, weighted), total - cursor - remaining)
-        nxt = end if i == count - 1 else cursor + target
-        ranges.append({"worker_id": str(worker["id"]), "start": cursor, "end": nxt})
+    for worker, extra in zip(ordered, extras):
+        size = 1 + extra
+        nxt = cursor + size
+        ranges.append(
+            {"worker_id": str(worker["id"]), "start": cursor, "end": nxt}
+        )
         cursor = nxt
-        total = end - cursor
-        weights = weights[i + 1:]
     return ranges
