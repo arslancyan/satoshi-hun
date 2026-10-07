@@ -60,22 +60,27 @@ jobs:
       name: production
       url: https://satoshi-hunt-api-production.up.railway.app
     steps:
+      - uses: actions/checkout@v4
       - name: Wait for Railway production
         env:
           API: https://satoshi-hunt-api-production.up.railway.app
-          EXPECTED_COMMIT: ${{ github.sha }}
         run: |
+          DEPLOY_RELEVANT=$(git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -E '^(backend/|Dockerfile|railway\.json|railway\.toml|requirements\.txt)' || true)
           for i in {1..30}; do
             if curl -fsS "$API/health" >/tmp/health.json; then
               cat /tmp/health.json
-              ACTUAL_COMMIT=$(python3 -c 'import json; print(json.load(open("/tmp/health.json")).get("commit",""))')
-              if [ "$ACTUAL_COMMIT" = "$EXPECTED_COMMIT" ]; then
-                echo "Production API is serving the expected commit."
+              if [ -z "$DEPLOY_RELEVANT" ]; then
+                echo "No production-backend files changed; healthy production is sufficient."
                 exit 0
               fi
-              echo "Production is healthy but still serving $ACTUAL_COMMIT; waiting for $EXPECTED_COMMIT."
+              ACTUAL_COMMIT=$(python3 -c 'import json; print(json.load(open("/tmp/health.json")).get("commit",""))')
+              if [ "$ACTUAL_COMMIT" = "$GITHUB_SHA" ]; then
+                echo "Production API is serving the expected backend commit."
+                exit 0
+              fi
+              echo "Production is healthy but still serving $ACTUAL_COMMIT; waiting for $GITHUB_SHA."
             fi
             sleep 10
           done
-          echo "::error::Production API did not become reachable after staging passed."
+          echo "::error::Production API did not reach the expected deployment state after staging passed."
           exit 1
