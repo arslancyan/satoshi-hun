@@ -37,6 +37,19 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/satoshi_hunt
           SATOSHI_HUNT_ENV: staging
         run: python tools/init_db.py
+      - name: Backup and restore drill
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/satoshi_hunt
+          BACKUP_DIR: /tmp/satoshi-backup
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          sh tools/backup_db.sh
+          backup_file=$(ls -1 /tmp/satoshi-backup/*.dump | tail -n 1)
+          PGPASSWORD=postgres createdb -h 127.0.0.1 -U postgres satoshi_hunt_restore
+          DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/satoshi_hunt_restore BACKUP_FILE="$backup_file"             sh -c "pg_restore --clean --if-exists --no-owner --dbname=\"$DATABASE_URL\" \"$BACKUP_FILE\""
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d satoshi_hunt_restore -v ON_ERROR_STOP=1             -c "select count(*) > 0 as restore_has_schema from information_schema.tables where table_schema='public'"
+
       - name: Start API
         env:
           DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/satoshi_hunt
