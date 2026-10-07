@@ -1920,7 +1920,7 @@ def stop_assignment(assignment_id: UUID, request: Request, account_id: UUID = De
             _stop_managed_solver(assignment_id)
             now=datetime.now(timezone.utc)
             cur.execute(
-                "update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING')",
+                "update job_assignments set status='RELEASED',last_heartbeat_at=null where id=%s and status in ('ASSIGNED','RUNNING','EXPIRED')",
                 (assignment_id,),
             )
             if cur.rowcount != 1:
