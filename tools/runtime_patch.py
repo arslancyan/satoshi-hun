@@ -134,6 +134,25 @@ if _db:
             cur.execute("create index if not exists idx_assignments_paused on job_assignments(worker_id,status,assigned_at desc) where status='PAUSED'")
 
 
+# Explicit MCP OAuth identity mapping bootstrap.
+# Keeps existing Railway databases compatible with the production migration.
+if _db:
+    with psycopg.connect(_db) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                create table if not exists mcp_oauth_identities (
+                  id uuid primary key,
+                  issuer text not null,
+                  subject text not null,
+                  account_id uuid not null references accounts(id) on delete cascade,
+                  created_at timestamptz not null default now(),
+                  last_seen_at timestamptz,
+                  unique (issuer, subject)
+                )
+            """)
+            cur.execute("create index if not exists idx_mcp_oauth_identities_account on mcp_oauth_identities(account_id)")
+
+
 # Central BTC Treasury schema/bootstrap. This keeps existing Railway databases
 # compatible while migrations are applied through normal deployment history.
 if _db:
