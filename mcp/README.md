@@ -59,3 +59,23 @@ The Account page contains a CHATGPT · WORKER CONTROL section. It explains the p
 ## Implementation target
 
 Expose a remote Streamable HTTP MCP endpoint at /mcp. The MCP service should call the existing Satoshi Hunt API over HTTPS, never connect directly to PostgreSQL. This preserves the existing API authorization, account-level one-active-puzzle lock, audit trail and queue gate.
+## Production OAuth configuration
+
+The MCP endpoint is an OAuth 2.1 resource server. The authorization server remains an external identity provider; the MCP SDK exposes protected-resource metadata and validates bearer tokens through the configured verifier. This follows the MCP AS/RS model rather than forwarding ChatGPT's OAuth token to the Satoshi Hunt API.
+
+Configure these Railway environment variables before enabling MCP:
+
+- `MCP_ENABLED=true`
+- `MCP_OAUTH_ISSUER=https://<your-authority>`
+- `MCP_RESOURCE_URL=https://<satoshi-hunt-host>/mcp`
+- `MCP_OAUTH_INTROSPECTION_URL=https://<your-authority>/introspect`
+- `MCP_OAUTH_CLIENT_ID=<resource-server-client-id>`
+- `MCP_OAUTH_CLIENT_SECRET=<resource-server-client-secret>`
+- `MCP_INTERNAL_SECRET=<long-random-server-secret>`
+- `MCP_ALLOWED_HOSTS=<satoshi-hunt-host>,<satoshi-hunt-host>:*`
+
+The OAuth provider must issue tokens containing the `worker:read` and `worker:control` scopes and bind the token to the exact MCP resource URL. MCP authorization guidance requires protected-resource metadata, authorization-server discovery, PKCE for authorization-code flows, and resource/audience binding.
+
+The private `/internal/mcp/session` route exchanges a validated MCP identity for a short-lived native Satoshi Hunt session. The OAuth bearer token is never passed through to downstream Satoshi Hunt API endpoints.
+
+Do not put `MCP_INTERNAL_SECRET`, OAuth client secrets, or Satoshi Hunt session tokens into the browser or ChatGPT instructions.
