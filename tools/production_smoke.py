@@ -4,6 +4,7 @@ import json, os, sys, subprocess, urllib.request, urllib.error
 
 BASE = os.environ.get("SATOSHI_HUNT_API", "https://satoshi-hunt-api-production.up.railway.app").rstrip("/")
 ORIGIN = os.environ.get("SATOSHI_HUNT_FRONTEND_ORIGIN", "https://arslancyan.github.io")
+EXPECTED_COMMIT = os.environ.get("SATOSHI_HUNT_EXPECTED_COMMIT", "").strip()
 
 def request(path, method="GET", data=None, headers=None):
     body = None if data is None else json.dumps(data).encode()
@@ -28,6 +29,12 @@ def check(name, ok, detail=""):
 ok=True
 s,h,b=request("/health")
 ok &= check("health", s==200 and b.get("ok") is True and b.get("custody")=="non-custodial", f"{s} {b}")
+if EXPECTED_COMMIT:
+    ok &= check(
+        "deployed commit",
+        b.get("commit") == EXPECTED_COMMIT,
+        f"expected={EXPECTED_COMMIT} actual={b.get('commit')}",
+    )
 ok &= check("security headers", s==200 and h.get("X-Content-Type-Options")=="nosniff" and h.get("X-Frame-Options")=="DENY" and bool(h.get("X-Request-ID")), f"{s} headers={h}")
 s,h,b=request("/ready")
 ok &= check("readiness", s==200 and b.get("ready") is True and b.get("database") is True and b.get("redis") is True and b.get("jwt") is True, f"{s} {b}")
