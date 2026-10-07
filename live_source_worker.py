@@ -148,7 +148,35 @@ def sync():
                         for u in address.get("live_utxos", [])
                     ])
                 authoritative = bool(item.verification.get("escrow_spend_is_authoritative"))
-                _upsert(cur, item, {"status":"CANDIDATE","verified":False,"exact_spends":evidence} if evidence else None)
+
+                # Never let an upstream catalog refresh overwrite a puzzle with
+                # active runtime state. Store the source snapshot for reconciliation
+                # after the puzzle stops/completes instead.
+                cur.execute(
+                    """select exists(
+                         select 1
+                         from job_assignments ja
+                         join jobs j on j.id=ja.job_id
+                         where j.puzzle_id=%s
+                           and (ja.status='RUNNING' or j.status='RUNNING')
+                       )""",
+                    (item.id,),
+                )
+                runtime_locked = bool(cur.fetchone()[0])
+                if runtime_locked:
+                    cur.execute(
+                        """update challenge_registry
+                           set pending_source_snapshot=%s::jsonb,
+                               pending_source_checked_at=now()
+                           where id=%s""",
+                        (json.dumps(item.as_registry()), item.id),
+                    )
+                else:
+                    _upsert(cur, item, {"status":"CANDIDATE","verified":False,"exact_spends":evidence} if evidence else None)
+
+                # An independently verified exact escrow spend is a terminal
+                # external-solve event, not a catalog refresh. Only this event
+                # is allowed to retire a running puzzle.
                 if authoritative and evidence and previous_balance > 0 and item.balance_btc <= 0:
                     chosen = evidence[0]
                     solve = {"status":"SOLVED","verified":True,"evidence_url":chosen["evidence_url"],
