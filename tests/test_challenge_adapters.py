@@ -33,3 +33,18 @@ def test_runtime_contract_exposes_research_reason():
     assert contract["adapter_registered"] is True
     assert contract["runnable"] is False
     assert "bounded" in contract["notes"] or "passphrase" in contract["notes"]
+
+
+def test_audited_adapter_is_not_runnable_until_explicitly_enabled():
+    from dataclasses import replace
+    base = get_adapter("peter-todd-sha256-bounty")
+    audited = replace(
+        base,
+        status="AUDITED",
+        execution_mode="COMPUTE",
+        search_space="bounded:test-domain",
+        solver_entrypoint="challenge_adapter_audit:_digest",
+        test_vectors=({"algorithm": "sha256", "message": "satoshi-hunt:0"},),
+    )
+    assert audited.audited is True
+    assert audited.runnable is False
