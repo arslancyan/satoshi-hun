@@ -836,8 +836,9 @@ def run_marketplace_challenge(challenge_id: str, body: AssignmentCreate, request
             execution_mode=str(verification.get("execution_mode") or "RESEARCH").upper()
             adapter_audited=verification.get("adapter_audited") is True
             adapter_runnable=verification.get("adapter_runnable") is True
+            adapter_status = str(verification.get("adapter_status") or "").upper()
             staging_verify = os.environ.get("SATOSHI_HUNT_ENV","").strip().lower() == "staging" and execution_mode == "VERIFY"
-            if not (execution_mode == "COMPUTE" and adapter_audited and adapter_runnable) and not (staging_verify and adapter_audited):
+            if not (execution_mode == "COMPUTE" and adapter_audited and adapter_runnable and adapter_status == "RUNNABLE") and not (staging_verify and adapter_audited):
                 raise HTTPException(409,"Challenge does not have an independently audited runnable adapter")
             cur.execute("select id,status from workers where id=%s and account_id=%s and status='ACTIVE'",(body.worker_id,account_id))
             worker_row=cur.fetchone()
