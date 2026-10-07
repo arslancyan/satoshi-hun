@@ -7,6 +7,7 @@ challenge material.
 from datetime import datetime, timezone
 import hashlib
 from challenge_adapters.peter_todd_hash_collision import ADAPTER as PeterToddHashCollisionAdapter
+from challenge_adapters.staging_hash_commitment import verify_hash as verify_staging_hash
 
 VALID={"OPEN + FUNDED","OPEN + UNFUNDED","SOLVED + FUNDED","SOLVED + EMPTY","UNKNOWN"}
 
@@ -114,8 +115,16 @@ class HashCommitmentAdapter(ChallengeAdapter):
     challenge_type = "hash-commitment"
 
     def verify(self, record, candidate_hash):
-        expected = str(record.get("verification", {}).get("expected_candidate_hash", "")).lower()
+        verification = record.get("verification", {}) or {}
+        expected = str(verification.get("expected_candidate_hash", "")).lower()
         supplied = str(candidate_hash).lower()
+        if verification.get("adapter_id") == "staging-hash-commitment-v1":
+            result = verify_staging_hash(
+                supplied,
+                expected,
+                expires_at=verification.get("expires_at"),
+            )
+            return bool(result.get("valid"))
         return bool(expected) and supplied == expected
 
 
