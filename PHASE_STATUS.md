@@ -41,3 +41,13 @@ Satoshi Hunt must not be presented as a live earning network until production in
 | 29 Worker reputation network | CORE DONE | Reliability scoring and reputation events schema |
 | 30 Satoshi Hunt Protocol v1 | FOUNDATION DONE | Protocol primitives and database model |
 | 31 Challenge Creator Portal | FOUNDATION DONE | Creator registration, approval, offers, publishing |
+
+## Phases 32–35
+
+| Phase | Status | Repository result |
+|---|---|---|
+| 32 Production reward/payout hardening | DONE | REVIEW settlement gate, owner approval, non-custodial payout queue, external txid validation, retry/idempotency controls |
+| 33 Real staging closure | DONE | PostgreSQL/Redis staging E2E, backup/restore drill, concurrency race gate, mock payout executor, payout worker, PAID verification |
+| 34 Real public challenge integration | FOUNDATION COMPLETE / PUBLIC-RUNNABLE BLOCKED | Public funded research challenges registered safely; explicit fail-closed qualification gate added. No real public challenge currently satisfies every runnable gate, so no research bounty is exposed as generic compute |
+| 35 Security & economic audit | IN PROGRESS | Fail-closed challenge promotion tests added; next gates are security abuse review, economic invariant audit, production CI confirmation, and external security review |
+
