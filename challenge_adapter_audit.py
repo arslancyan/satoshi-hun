@@ -88,8 +88,8 @@ def audit_adapter(spec: AdapterSpec) -> list[str]:
                         challenge = str(vector.get("challenge", vector.get("challenge_id")))
                         difficulty = int(vector["difficulty_bits"])
                         max_nonce = int(vector["max_nonce"])
-                        if max_nonce < 0 or max_nonce > 10_000_000:
-                            errors.append("bounded PoW test vector max_nonce must be finite and <= 10,000,000")
+                        if max_nonce < 0 or max_nonce > 16_777_215:
+                            errors.append("bounded PoW test vector max_nonce must be finite and <= 16,777,215")
                             continue
                         if vector.get("known_nonce") is not None and vector.get("known_hash"):
                             if spec.adapter_id != "bounded-escrow-preimage-v1":
