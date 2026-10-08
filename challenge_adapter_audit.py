@@ -91,21 +91,31 @@ def audit_adapter(spec: AdapterSpec) -> list[str]:
                         if max_nonce < 0 or max_nonce > 10_000_000:
                             errors.append("bounded PoW test vector max_nonce must be finite and <= 10,000,000")
                             continue
-                        try:
-                            solved = verifier(challenge, difficulty, max_nonce, max_attempts=max_nonce + 1)
-                        except Exception as exc:
-                            errors.append(f"bounded PoW vector execution failed: {exc}")
-                            continue
-                        if not solved:
-                            errors.append("bounded PoW test vector did not produce a solution")
-                            continue
-                        if int(solved["nonce"]) > max_nonce:
-                            errors.append("bounded PoW solver returned nonce outside declared range")
-                            continue
-                        from challenge_adapters.bounded_leading_zero import verify as verify_bounded
-                        checked = verify_bounded(
-                            challenge, difficulty, int(solved["nonce"]), str(solved["hash"]), max_nonce
-                        )
+                        if vector.get("known_nonce") is not None and vector.get("known_hash"):
+                            if spec.adapter_id != "bounded-escrow-preimage-v1":
+                                errors.append("known_nonce vector is only valid for the bounded escrow adapter")
+                                continue
+                            from challenge_adapters.bounded_escrow_preimage import verify as verify_bounded
+                            checked = verify_bounded(
+                                challenge, difficulty, int(vector["known_nonce"]),
+                                str(vector["known_hash"]), max_nonce
+                            )
+                        else:
+                            try:
+                                solved = verifier(challenge, difficulty, max_nonce, max_attempts=max_nonce + 1)
+                            except Exception as exc:
+                                errors.append(f"bounded PoW vector execution failed: {exc}")
+                                continue
+                            if not solved:
+                                errors.append("bounded PoW test vector did not produce a solution")
+                                continue
+                            if int(solved["nonce"]) > max_nonce:
+                                errors.append("bounded PoW solver returned nonce outside declared range")
+                                continue
+                            from challenge_adapters.bounded_leading_zero import verify as verify_bounded
+                            checked = verify_bounded(
+                                challenge, difficulty, int(solved["nonce"]), str(solved["hash"]), max_nonce
+                            )
                         if not checked.get("valid"):
                             errors.append("bounded PoW test vector failed independent verifier")
                     else:
