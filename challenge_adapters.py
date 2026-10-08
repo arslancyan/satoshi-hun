@@ -60,6 +60,27 @@ ADAPTERS: dict[str, AdapterSpec] = {
         ),
         "Satoshi Hunt-authored bounded nonce proof. It is not a private-key or seed search. Production promotion still requires a dedicated funded BTC escrow.",
     ),
+    "satoshi-hunt-native-btc-quick-v2": AdapterSpec(
+        "satoshi-hunt-native-btc-quick-v2", "bounded-escrow-preimage-v1", "COMPUTE",
+        "p2wsh-sha256-preimage", "RUNNABLE", "0..1048575 nonce range",
+        "0..1048575", "challenge_adapters.bounded_escrow_preimage:solve",
+        ({"challenge_id":"satoshi-hunt-native-btc-quick-v2","difficulty_bits":16,"max_nonce":1048575},),
+        "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
+    ),
+    "satoshi-hunt-native-btc-hard-v2": AdapterSpec(
+        "satoshi-hunt-native-btc-hard-v2", "bounded-escrow-preimage-v1", "COMPUTE",
+        "p2wsh-sha256-preimage", "RUNNABLE", "0..4194303 nonce range",
+        "0..4194303", "challenge_adapters.bounded_escrow_preimage:solve",
+        ({"challenge_id":"satoshi-hunt-native-btc-hard-v2","difficulty_bits":20,"max_nonce":4194303},),
+        "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
+    ),
+    "satoshi-hunt-native-btc-extreme-v2": AdapterSpec(
+        "satoshi-hunt-native-btc-extreme-v2", "bounded-escrow-preimage-v1", "COMPUTE",
+        "p2wsh-sha256-preimage", "RUNNABLE", "0..16777215 nonce range",
+        "0..16777215", "challenge_adapters.bounded_escrow_preimage:solve",
+        ({"challenge_id":"satoshi-hunt-native-btc-extreme-v2","difficulty_bits":24,"max_nonce":16777215},),
+        "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
+    ),
     "base-leading-zero-canary": AdapterSpec(
         "base-leading-zero-canary", "bounded-leading-zero-v1", "COMPUTE",
         "leading-zero-proof", "RUNNABLE", "finite nonce range",
