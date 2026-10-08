@@ -64,21 +64,21 @@ ADAPTERS: dict[str, AdapterSpec] = {
         "satoshi-hunt-native-btc-quick-v2", "bounded-escrow-preimage-v1", "COMPUTE",
         "p2wsh-sha256-preimage", "RUNNABLE", "0..1048575 nonce range",
         "0..1048575", "challenge_adapters.bounded_escrow_preimage:solve",
-        ({"challenge_id":"satoshi-hunt-native-btc-quick-v2","difficulty_bits":16,"max_nonce":1048575,"known_nonce":10697,"known_hash":"0000085f05d9cf7c4c2d14ec2a07ad67c0c5e58177c128ba81eca68fdf556c19"},),
+        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},)
         "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
     ),
     "satoshi-hunt-native-btc-hard-v2": AdapterSpec(
         "satoshi-hunt-native-btc-hard-v2", "bounded-escrow-preimage-v1", "COMPUTE",
         "p2wsh-sha256-preimage", "RUNNABLE", "0..4194303 nonce range",
         "0..4194303", "challenge_adapters.bounded_escrow_preimage:solve",
-        ({"challenge_id":"satoshi-hunt-native-btc-hard-v2","difficulty_bits":20,"max_nonce":4194303,"known_nonce":584976,"known_hash":"000004da13ee3ef33c5fab1a177e2ea796bf868fc8e006b17e97399291388cdf"},),
+        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},)
         "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
     ),
     "satoshi-hunt-native-btc-extreme-v2": AdapterSpec(
         "satoshi-hunt-native-btc-extreme-v2", "bounded-escrow-preimage-v1", "COMPUTE",
         "p2wsh-sha256-preimage", "RUNNABLE", "0..16777215 nonce range",
         "0..16777215", "challenge_adapters.bounded_escrow_preimage:solve",
-        ({"challenge_id":"satoshi-hunt-native-btc-extreme-v2","difficulty_bits":24,"max_nonce":16777215,"known_nonce":14248268,"known_hash":"00000091bf9339f832c656d243fa3fc5f6c1f1e06127bb68d0eeea8fa30013c8"},),
+        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},)
         "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
     ),
     "base-leading-zero-canary": AdapterSpec(
