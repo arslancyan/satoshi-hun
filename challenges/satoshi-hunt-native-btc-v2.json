@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "source_adapter": "satoshi-hunt-bounded-escrow-v1",
+  "payout_mode": "DIRECT_PUBLIC_ESCROW",
+  "claim_method": "P2WSH_SHA256_PREIMAGE",
+  "notes": "Prepared public challenges. They become OPEN + FUNDED only after the exact escrow address is funded and independently verified on-chain.",
+  "challenges": [
+    {
+      "id": "satoshi-hunt-native-btc-quick-v2",
+      "title": "Satoshi Hunt Native — QUICK",
+      "reward_btc": 0.0001,
+      "balance_btc": 0,
+      "difficulty_bits": 16,
+      "max_nonce": 1048575,
+      "escrow_address": "bc1qq275r5a96zjh9seap6pha5tlea2mjnndy3adv4zylq2w3wgr6mnqzx7dyp",
+      "witness_script_hex": "a8200000085f05d9cf7c4c2d14ec2a07ad67c0c5e58177c128ba81eca68fdf556c198851",
+      "witness_program_sha256": "02bd41d3a5d0a572c33d0e837ed17fcf55b94e6d247ad65444f814e8b903d6e6",
+      "known_solution": {"nonce": 10697, "hash": "0000085f05d9cf7c4c2d14ec2a07ad67c0c5e58177c128ba81eca68fdf556c19"}
+    },
+    {
+      "id": "satoshi-hunt-native-btc-hard-v2",
+      "title": "Satoshi Hunt Native — HARD",
+      "reward_btc": 0.0002,
+      "balance_btc": 0,
+      "difficulty_bits": 20,
+      "max_nonce": 4194303,
+      "escrow_address": "bc1q9ay6gzz9fypjjjnmasq0u24tzd7dur95a7fvj0ly8fryjzpldw4qpmyg7v",
+      "witness_script_hex": "a820000004da13ee3ef33c5fab1a177e2ea796bf868fc8e006b17e97399291388cdf8851",
+      "witness_program_sha256": "2f49a408454903294a7bec00fe2aab137cde0cb4ef92c93fe43a4649083f6baa",
+      "known_solution": {"nonce": 584976, "hash": "000004da13ee3ef33c5fab1a177e2ea796bf868fc8e006b17e97399291388cdf"}
+    },
+    {
+      "id": "satoshi-hunt-native-btc-extreme-v2",
+      "title": "Satoshi Hunt Native — EXTREME",
+      "reward_btc": 0.0005,
+      "balance_btc": 0,
+      "difficulty_bits": 24,
+      "max_nonce": 16777215,
+      "escrow_address": "bc1qa8yh4ezhpjhhdg8z0whr2csr7ttpv0vqz3t9ptsaw6q4x72r6frsq6nlq3",
+      "witness_script_hex": "a82000000091bf9339f832c656d243fa3fc5f6c1f1e06127bb68d0eeea8fa30013c88851",
+      "witness_program_sha256": "e9c97ae4570caf76a0e27bae356203f2d6163d80145650ae1d7681537943d247",
+      "known_solution": {"nonce": 14248268, "hash": "00000091bf9339f832c656d243fa3fc5f6c1f1e06127bb68d0eeea8fa30013c8"}
+    }
+  ]
+}
