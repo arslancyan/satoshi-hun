@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
+from payout_executor.escrow import claim_escrow
 from pydantic import BaseModel, Field
 
 APP_VERSION = "0.1.0"
@@ -74,8 +75,24 @@ def db():
         txid text,
         status text not null,
         created_at integer not null,
-        updated_at integer not null
+        updated_at integer not null,
+        payout_mode text not null default 'PLATFORM_TREASURY',
+        challenge_id text,
+        claim_nonce integer,
+        escrow_address text,
+        witness_script_hex text
     )""")
+    for ddl in (
+        "alter table payouts add column payout_mode text not null default 'PLATFORM_TREASURY'",
+        "alter table payouts add column challenge_id text",
+        "alter table payouts add column claim_nonce integer",
+        "alter table payouts add column escrow_address text",
+        "alter table payouts add column witness_script_hex text",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     return conn
 
@@ -183,6 +200,16 @@ class PayoutRequest(BaseModel):
     payout_address: str = Field(min_length=14, max_length=128)
     idempotency_key: str = Field(min_length=8, max_length=256)
 
+class EscrowPayoutRequest(BaseModel):
+    withdrawal_id: str = Field(min_length=1, max_length=128)
+    amount_btc: Decimal = Field(gt=0)
+    payout_address: str = Field(min_length=14, max_length=128)
+    idempotency_key: str = Field(min_length=8, max_length=256)
+    challenge_id: str = Field(min_length=1, max_length=128)
+    claim_nonce: int = Field(ge=0, le=0x7FFFFFFFFFFFFFFF)
+    escrow_address: str = Field(min_length=14, max_length=128)
+    witness_script_hex: str = Field(min_length=2, max_length=256)
+
 @app.get("/health")
 def health():
     return {
@@ -192,6 +219,81 @@ def health():
         "signer_configured": bool(RPC_URL and RPC_USER and RPC_PASSWORD),
         "limits": {"max_single_btc": str(MAX_SINGLE), "max_daily_btc": str(MAX_DAILY)},
     }
+
+
+@app.post("/escrow-payout")
+def escrow_payout(body: EscrowPayoutRequest, authorization: str | None = Header(default=None)):
+    """Spend a Satoshi Hunt permissionless P2WSH escrow with the verified preimage.
+
+    This path does not use the platform treasury wallet and never requires a
+    private key. The exact challenge script/address binding is checked again
+    inside claim_escrow before any broadcast is attempted.
+    """
+    auth(authorization.replace("Bearer ", "", 1) if authorization else None)
+    if not ENABLED:
+        raise HTTPException(503, "Payout executor is disabled")
+    if NETWORK != "mainnet":
+        raise HTTPException(503, "Production escrow payout requires Bitcoin mainnet")
+    if not valid_mainnet_address(body.payout_address):
+        raise HTTPException(422, "Invalid Bitcoin mainnet payout address")
+    amount = Decimal(str(body.amount_btc))
+    if amount > MAX_SINGLE:
+        raise HTTPException(409, "Payout exceeds executor single-payout limit")
+    if amount <= 0:
+        raise HTTPException(422, "Payout amount must be positive")
+
+    conn = db()
+    try:
+        existing = conn.execute(
+            "select txid,status,amount_btc,payout_address,payout_mode from payouts where withdrawal_id=? or idempotency_key=?",
+            (body.withdrawal_id, body.idempotency_key),
+        ).fetchone()
+        if existing:
+            if existing[2] != str(amount) or existing[3] != body.payout_address:
+                raise HTTPException(409, "Idempotency key conflicts with an existing payout")
+            if existing[0]:
+                return {"txid": existing[0], "status": existing[1], "idempotent_replay": True}
+            raise HTTPException(409, "Payout is already processing")
+
+        today = time.strftime("%Y-%m-%d", time.gmtime())
+        row = conn.execute(
+            "select coalesce(sum(cast(amount_btc as real)),0) from payouts where status='PAID' and substr(datetime(created_at,'unixepoch'),1,10)=?",
+            (today,),
+        ).fetchone()
+        daily = Decimal(str(row[0] or 0))
+        if daily + amount > MAX_DAILY:
+            raise HTTPException(409, "Daily executor payout limit reached")
+
+        now = int(time.time())
+        conn.execute(
+            "insert into payouts(withdrawal_id,idempotency_key,amount_btc,payout_address,status,created_at,updated_at,payout_mode,challenge_id,claim_nonce,escrow_address,witness_script_hex) values(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (body.withdrawal_id, body.idempotency_key, str(amount), body.payout_address, "PROCESSING", now, now, "DIRECT_PUBLIC_ESCROW", body.challenge_id, int(body.claim_nonce), body.escrow_address, body.witness_script_hex),
+        )
+        conn.commit()
+        try:
+            result = claim_escrow(
+                challenge_id=body.challenge_id,
+                nonce=int(body.claim_nonce),
+                escrow_address=body.escrow_address,
+                witness_script_hex=body.witness_script_hex,
+                payout_address=body.payout_address,
+                reward_sats=int(amount * Decimal("100000000")),
+            )
+        except Exception as exc:
+            conn.execute("update payouts set status='FAILED',updated_at=? where withdrawal_id=?", (int(time.time()), body.withdrawal_id))
+            conn.commit()
+            raise HTTPException(502, f"Bitcoin escrow broadcast failed: {type(exc).__name__}") from exc
+
+        txid = str(result.get("txid", "")).strip()
+        if len(txid) != 64 or any(c not in "0123456789abcdefABCDEF" for c in txid):
+            conn.execute("update payouts set status='FAILED',updated_at=? where withdrawal_id=?", (int(time.time()), body.withdrawal_id))
+            conn.commit()
+            raise HTTPException(502, "Escrow broadcaster returned an invalid txid")
+        conn.execute("update payouts set status='PAID',txid=?,updated_at=? where withdrawal_id=?", (txid,int(time.time()),body.withdrawal_id))
+        conn.commit()
+        return {**result, "status": "PAID", "idempotent_replay": False}
+    finally:
+        conn.close()
 
 @app.post("/payout")
 def payout(body: PayoutRequest, authorization: str | None = Header(default=None)):
