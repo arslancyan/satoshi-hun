@@ -135,6 +135,48 @@ def solve_hash_collision(algorithm, start_cursor=0, max_candidates=0, max_memory
 
 
 
+def solve_bounded_preimage(
+    challenge_id,
+    difficulty_bits,
+    max_nonce,
+    start_nonce=0,
+    max_attempts=0,
+    checkpoint_callback=None,
+    stop_event=None,
+):
+    """Official native solver for QUICK/HARD/EXTREME bounded escrow puzzles."""
+    difficulty_bits=int(difficulty_bits)
+    max_nonce=int(max_nonce)
+    if not 1 <= difficulty_bits <= 32:
+        raise ValueError("invalid difficulty_bits")
+    if max_nonce < 0:
+        raise ValueError("invalid max_nonce")
+    start=max(0,int(start_nonce))
+    target=1 << (256-difficulty_bits)
+    attempts=0
+    started=time.monotonic()
+    last_checkpoint=started
+    for nonce in range(start,max_nonce+1):
+        if stop_event and stop_event.is_set():
+            return None,nonce,attempts,time.monotonic()-started
+        if max_attempts and attempts >= int(max_attempts):
+            return None,nonce,attempts,time.monotonic()-started
+        h=hashlib.sha256(f"{challenge_id}:{nonce}".encode("utf-8")).digest()
+        attempts += 1
+        if int.from_bytes(h,"big") < target:
+            return {
+                "nonce":nonce,
+                "hash":h.hex(),
+                "preimage":f"{challenge_id}:{nonce}",
+                "attempts":attempts,
+            },nonce+1,attempts,time.monotonic()-started
+        now=time.monotonic()
+        if checkpoint_callback and now-last_checkpoint >= 30:
+            checkpoint_callback(start,max_nonce+1,nonce+1,str(nonce+1))
+            last_checkpoint=now
+    return None,max_nonce+1,attempts,time.monotonic()-started
+
+
 async def run_assignment(assignment):
     aid = assignment["id"]
     job_id = assignment["job_id"]
@@ -154,6 +196,110 @@ async def run_assignment(assignment):
         # must independently refuse research-only or unaudited assignments.
         if not challenge_execution_allowed(challenge):
             raise RuntimeError("Challenge is not backed by an audited runnable compute adapter")
+        if challenge.get("challenge_type") == "sha256-preimage-pow":
+            adapter_id=str(verification.get("adapter_id",""))
+            if adapter_id != "bounded-escrow-preimage-v1":
+                raise RuntimeError("Bounded BTC challenge is missing the audited escrow adapter")
+            max_nonce=int(verification.get("max_nonce",-1))
+            difficulty_bits=int(verification.get("difficulty_bits",0))
+            if max_nonce < 0 or not 1 <= difficulty_bits <= 32:
+                raise RuntimeError("Bounded BTC challenge has invalid search parameters")
+            if puzzle_id not in {
+                "satoshi-hunt-native-btc-quick-v2",
+                "satoshi-hunt-native-btc-hard-v2",
+                "satoshi-hunt-native-btc-extreme-v2",
+            }:
+                raise RuntimeError("Unknown bounded BTC puzzle is blocked from native execution")
+
+            resume=await asyncio.to_thread(api_json,f"/assignments/{aid}/resume")
+            resume_cursor=resume.get("resume_cursor")
+            cursor_start=max(0,int(resume_cursor or 0))
+            if "SATOSHI_HUNT_START_CURSOR" in os.environ:
+                cursor_start=max(cursor_start,int(os.environ["SATOSHI_HUNT_START_CURSOR"]))
+            if cursor_start > max_nonce:
+                raise RuntimeError("Assignment cursor is already beyond the bounded search range")
+
+            async def heartbeat_loop_bounded():
+                while not stop_event.is_set():
+                    try:
+                        await asyncio.to_thread(api_call,f"/assignments/{aid}/heartbeat")
+                    except Exception as exc:
+                        print(f"[{puzzle_id}] heartbeat: {exc}")
+                        if "409" in str(exc) or "404" in str(exc):
+                            stop_event.set()
+                            return
+                    await asyncio.sleep(15)
+
+            heartbeat_task=asyncio.create_task(heartbeat_loop_bounded())
+
+            def checkpoint_bounded(start,end,nxt,nonce):
+                try:
+                    api_call(
+                        f"/assignments/{aid}/checkpoint",
+                        "POST",
+                        {
+                            "assignment_id":aid,
+                            "cursor_start":start,
+                            "cursor_end":end,
+                            "cursor_next":nxt,
+                            "nonce":nonce,
+                        },
+                    )
+                    print(f"[{puzzle_id}] checkpoint cursor={nxt}")
+                except Exception as exc:
+                    print(f"[{puzzle_id}] checkpoint: {exc}")
+
+            try:
+                max_attempts=max(0,int(os.environ.get("SATOSHI_HUNT_MAX_CANDIDATES","0")))
+                candidate,cursor,attempts,elapsed=await asyncio.to_thread(
+                    solve_bounded_preimage,
+                    puzzle_id,
+                    difficulty_bits,
+                    max_nonce,
+                    cursor_start,
+                    max_attempts,
+                    checkpoint_bounded,
+                    stop_event,
+                )
+                if stop_event.is_set():
+                    print(f"[{puzzle_id}] native search stopped at nonce={cursor}")
+                    return
+                if candidate:
+                    print(
+                        f"[{puzzle_id}] NATIVE {puzzle_id} solved "
+                        f"nonce={candidate['nonce']} attempts={attempts}"
+                    )
+                    result=await asyncio.to_thread(
+                        api_call,
+                        f"/jobs/{job_id}/claims",
+                        "POST",
+                        {
+                            "assignment_id":aid,
+                            "worker_id":WORKER_ID,
+                            "candidate_hash":candidate["hash"],
+                            "candidate_nonce":candidate["nonce"],
+                            "result_status":"TESTED",
+                            "cpu_seconds":max(0,int(elapsed)),
+                        },
+                    )
+                    print(f"[{puzzle_id}] verifier response: {result}")
+                else:
+                    print(f"[{puzzle_id}] native search exhausted at nonce={cursor}; no claim submitted")
+                try:
+                    done=await asyncio.to_thread(api_call,f"/assignments/{aid}/complete")
+                    print(f"[{puzzle_id}] completed: {done.get('contribution_seconds',0)} contribution seconds")
+                except Exception as exc:
+                    print(f"[{puzzle_id}] completion: {exc}")
+                return
+            finally:
+                stop_event.set()
+                if heartbeat_task:
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
+
         if challenge.get("challenge_type") != "hash-collision":
             raise RuntimeError(f"No real solver is registered for challenge type {challenge.get('challenge_type')!r}")
 
