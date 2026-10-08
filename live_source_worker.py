@@ -3,6 +3,7 @@ import json, os
 from datetime import datetime, timezone
 import psycopg
 from challenge_sources import OpenCryptoPuzzlesAdapter
+from bounded_escrow_source import SatoshiHuntBoundedEscrowAdapter
 from strategy_router import choose_strategy
 from adaptive_rotation import rank_challenges
 from challenge_telemetry import collect_from_rows
@@ -187,7 +188,8 @@ def sync():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is required")
     source = OpenCryptoPuzzlesAdapter()
-    records = source.discover()
+    bounded_source = SatoshiHuntBoundedEscrowAdapter()
+    records = source.discover() + bounded_source.discover()
     discovered_ids = {x.id for x in records}
     solved = []
     changed_to_unfunded = 0
@@ -202,7 +204,7 @@ def sync():
                 previous_snapshot = (previous[3] or {}) if previous else {}
                 evidence = []
                 if previous_snapshot.get("addresses"):
-                    evidence = source.btc.exact_outspend_evidence([
+                    evidence = evidence_source.btc.exact_outspend_evidence([
                         u for address in previous_snapshot.get("addresses", [])
                         for u in address.get("live_utxos", [])
                     ])
