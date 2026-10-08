@@ -28,7 +28,7 @@ jobs:
           assert isinstance(data, (list, dict)), "public challenge source is not JSON"
           with urllib.request.urlopen(api + "/health", timeout=20) as r:
               health = json.load(r)
-          assert health.get("status") == "ok", f"production health failed: {health}"
+          assert health.get("ok") is True, f"production health failed: {health}"
           print("LIVE_SOURCE_VALIDATION=PASS")
           print("PUBLIC_CHALLENGES_TYPE=", type(data).__name__)
           print("PRODUCTION_HEALTH=PASS")
