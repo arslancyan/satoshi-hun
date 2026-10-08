@@ -64,7 +64,7 @@ ADAPTERS: dict[str, AdapterSpec] = {
         "satoshi-hunt-native-btc-quick-v2", "bounded-escrow-preimage-v1", "COMPUTE",
         "p2wsh-sha256-preimage", "RUNNABLE", "0..1048575 nonce range",
         "0..1048575", "challenge_adapters.bounded_escrow_preimage:solve",
-        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},)
+        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},),
         "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
     ),
     "satoshi-hunt-native-btc-hard-v2": AdapterSpec(
