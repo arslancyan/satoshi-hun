@@ -88,6 +88,9 @@ def audit_adapter(spec: AdapterSpec) -> list[str]:
                         challenge = str(vector.get("challenge", vector.get("challenge_id")))
                         difficulty = int(vector["difficulty_bits"])
                         max_nonce = int(vector["max_nonce"])
+                        if spec.adapter_id == "bounded-escrow-preimage-v1" and not challenge.startswith("satoshi-hunt-audit-canary-"):
+                            errors.append("bounded escrow audit vectors must use an audit canary challenge id")
+                            continue
                         if max_nonce < 0 or max_nonce > 16_777_215:
                             errors.append("bounded PoW test vector max_nonce must be finite and <= 16,777,215")
                             continue
@@ -146,6 +149,12 @@ def main(argv: list[str]) -> int:
         catalog = payload.get("puzzles", [])
 
     failures: list[str] = []
+    # Public manifests must never carry a known solution for a funded challenge.
+    # Audit vectors must use a separate canary challenge identifier so the
+    # checked-in tests cannot leak a spendable production preimage.
+    for item in catalog:
+        if item.get("known_solution") is not None:
+            failures.append(f"{item.get('id')}: public challenge manifest contains known_solution")
     for spec in ADAPTERS.values():
         failures.extend(
             f"{spec.challenge_id}: {error}"
