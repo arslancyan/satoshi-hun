@@ -295,6 +295,21 @@ if _db:
             """)
 
 
+# Direct public escrow settlement compatibility migration.
+if _db:
+    with psycopg.connect(_db) as conn:
+        with conn.cursor() as cur:
+            cur.execute("alter table work_claims add column if not exists candidate_nonce bigint")
+            cur.execute("alter table withdrawal_requests add column if not exists payout_mode text not null default 'PLATFORM_TREASURY'")
+            cur.execute("alter table withdrawal_requests add column if not exists puzzle_id text")
+            cur.execute("alter table withdrawal_requests add column if not exists claim_id uuid references work_claims(id)")
+            cur.execute("alter table withdrawal_requests add column if not exists claim_nonce bigint")
+            cur.execute("alter table withdrawal_requests add column if not exists claim_hash text")
+            cur.execute("alter table withdrawal_requests add column if not exists escrow_address text")
+            cur.execute("alter table withdrawal_requests add column if not exists witness_script_hex text")
+            cur.execute("create index if not exists idx_withdrawals_payout_mode on withdrawal_requests(status,payout_mode,created_at)")
+
+
 # Secure PSBT payout settlement bootstrap.
 if _db:
     with psycopg.connect(_db) as conn:
