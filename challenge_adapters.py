@@ -71,14 +71,14 @@ ADAPTERS: dict[str, AdapterSpec] = {
         "satoshi-hunt-native-btc-hard-v2", "bounded-escrow-preimage-v1", "COMPUTE",
         "p2wsh-sha256-preimage", "RUNNABLE", "0..4194303 nonce range",
         "0..4194303", "challenge_adapters.bounded_escrow_preimage:solve",
-        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},)
+        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},),
         "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
     ),
     "satoshi-hunt-native-btc-extreme-v2": AdapterSpec(
         "satoshi-hunt-native-btc-extreme-v2", "bounded-escrow-preimage-v1", "COMPUTE",
         "p2wsh-sha256-preimage", "RUNNABLE", "0..16777215 nonce range",
         "0..16777215", "challenge_adapters.bounded_escrow_preimage:solve",
-        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},)
+        ({"challenge_id":"satoshi-hunt-audit-canary-v1","difficulty_bits":8,"max_nonce":10000},),
         "Permissionless P2WSH escrow. Requires exact on-chain funding before marketplace promotion.",
     ),
     "base-leading-zero-canary": AdapterSpec(
