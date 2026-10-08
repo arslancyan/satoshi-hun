@@ -135,6 +135,7 @@ create table if not exists work_claims (
   started_at timestamptz not null default now(),
   finished_at timestamptz,
   cpu_seconds integer not null default 0 check (cpu_seconds >= 0),
+  candidate_nonce bigint,
   unique (job_id, candidate_hash)
 );
 
@@ -253,6 +254,17 @@ create index if not exists idx_withdrawals_account on withdrawal_requests(accoun
 -- Account passwords are salted PBKDF2 hashes; plaintext passwords are never stored.
 alter table accounts add column if not exists password_hash text;
 create index if not exists idx_withdrawals_status_created on withdrawal_requests(status,created_at);
+
+-- Direct public escrow settlement evidence. These fields bind a queued payout
+-- to the exact challenge claim without storing any signing material.
+alter table withdrawal_requests add column if not exists payout_mode text not null default 'PLATFORM_TREASURY';
+alter table withdrawal_requests add column if not exists puzzle_id text;
+alter table withdrawal_requests add column if not exists claim_id uuid references work_claims(id);
+alter table withdrawal_requests add column if not exists claim_nonce bigint;
+alter table withdrawal_requests add column if not exists claim_hash text;
+alter table withdrawal_requests add column if not exists escrow_address text;
+alter table withdrawal_requests add column if not exists witness_script_hex text;
+create index if not exists idx_withdrawals_payout_mode on withdrawal_requests(status,payout_mode,created_at);
 
 -- External-solution rotation state. A challenge can be retired when an
 -- authoritative public source proves it was solved outside Satoshi Hunt.
