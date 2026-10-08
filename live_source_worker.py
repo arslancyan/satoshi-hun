@@ -204,6 +204,7 @@ def sync():
                 previous_snapshot = (previous[3] or {}) if previous else {}
                 evidence = []
                 if previous_snapshot.get("addresses"):
+                    evidence_source = bounded_source if item.source_adapter == "satoshi-hunt-bounded-escrow-v1" else source
                     evidence = evidence_source.btc.exact_outspend_evidence([
                         u for address in previous_snapshot.get("addresses", [])
                         for u in address.get("live_utxos", [])
