@@ -470,6 +470,7 @@ class ClaimCreate(BaseModel):
     assignment_id: UUID
     worker_id: UUID
     candidate_hash: str = Field(min_length=32, max_length=128)
+    candidate_nonce: int | None = Field(default=None, ge=0, le=0x7FFFFFFFFFFFFFFF)
     result_status: str = Field(default="TESTED", pattern="^(TESTED|REJECTED)$")
     cpu_seconds: int = Field(default=0, ge=0, le=86400)
 
@@ -1835,7 +1836,18 @@ def complete_assignment(assignment_id: UUID, request: Request, token_worker_id: 
 
 def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash):
     cur.execute(
-        "select j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification "
+        "select candidate_nonce,candidate_hash from work_claims where id=%s for update",
+        (claim_id,),
+    )
+    claim_row=cur.fetchone()
+    if not claim_row:
+        return None
+    candidate_nonce, stored_hash = claim_row
+    if str(stored_hash) != str(candidate_hash):
+        raise HTTPException(409, "Claim candidate hash changed before verification")
+
+    cur.execute(
+        "select j.puzzle_id,j.status,c.challenge_type,c.reward_btc,c.balance_btc,c.status,c.rules,c.provenance,c.verification,c.payout "
         "from jobs j join challenge_registry c on c.id=j.puzzle_id "
         "where j.id=%s and j.scope='public-reward-challenge' for update",
         (job_id,),
@@ -1846,8 +1858,9 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
     record={
         "id":job[0],"type":job[2],"reward_btc":job[3],"balance_btc":job[4],
         "status":job[5],"rules":job[6],"provenance":job[7],"verification":job[8],
+        "payout":job[9],
     }
-    result=verify_candidate_hash(record,candidate_hash)
+    result=verify_candidate_hash(record,candidate_hash,candidate_nonce)
     if not result["verified"]:
         cur.execute("update work_claims set result_status='REJECTED' where id=%s and result_status='TESTED'",(claim_id,))
         return {"verified":False,"reason":result["reason"]}
@@ -1870,9 +1883,22 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
     if not account_row:
         raise HTTPException(404,"Worker account not found")
     account_id=account_row[0]
-    event=build_reward_event(account_id,job[0],job[3])
+
+    payout_meta=job[9] if isinstance(job[9],dict) else {}
+    direct_escrow=str(payout_meta.get("mode","")).upper() == "DIRECT_PUBLIC_ESCROW"
+    if direct_escrow:
+        # A public escrow is the prize itself. No platform fee is removed from
+        # the funded UTXO; the network fee is paid from the escrow at broadcast.
+        event={
+            "gross_reward_btc": Decimal(str(job[3])),
+            "worker_share_btc": Decimal(str(job[3])),
+            "platform_fee_btc": Decimal("0"),
+        }
+    else:
+        event=build_reward_event(account_id,job[0],job[3])
     if Decimal(str(event["worker_share_btc"])) + Decimal(str(event["platform_fee_btc"])) != Decimal(str(event["gross_reward_btc"])):
         raise HTTPException(500,"Reward split integrity check failed")
+
     reward_id=uuid4()
     cur.execute(
         "insert into reward_events(id,account_id,puzzle_id,gross_reward_btc,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id) "
@@ -1892,14 +1918,16 @@ def auto_credit_verified_claim(cur, job_id, claim_id, worker_id, candidate_hash)
     reward_id=inserted[0]
     record_audit_event(
         cur,"REWARD_REVIEW_CREATED","reward_event",reward_id,account_id,worker_id,
-        {"job_id":str(job_id),"claim_id":str(claim_id),"worker_share_btc":event["worker_share_btc"],
-         "platform_fee_btc":event["platform_fee_btc"],"settlement_status":"REVIEW","custody":"none"},
+        {"job_id":str(job_id),"claim_id":str(claim_id),"worker_share_btc":str(event["worker_share_btc"]),
+         "platform_fee_btc":str(event["platform_fee_btc"]),"payout_mode":"DIRECT_PUBLIC_ESCROW" if direct_escrow else "PLATFORM_TREASURY",
+         "settlement_status":"REVIEW","custody":"none"},
     )
     return {
         "verified":True,"reward_id":str(reward_id),
         "worker_credit_btc":event["worker_share_btc"],
         "platform_fee_btc":event["platform_fee_btc"],
         "settlement_status":"REVIEW","withdrawal_queued":False,
+        "payout_mode":"DIRECT_PUBLIC_ESCROW" if direct_escrow else "PLATFORM_TREASURY",
     }
 
 
@@ -1947,9 +1975,9 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                 # alive when the database rejects a duplicate candidate.
                 with conn.transaction():
                     cur.execute(
-                        "insert into work_claims(id,job_id,worker_id,candidate_hash,result_status,cpu_seconds,finished_at) "
-                        "values(%s,%s,%s,%s,%s,%s,now())",
-                        (cid,job_id,body.worker_id,body.candidate_hash,body.result_status,accepted_cpu_seconds),
+                        "insert into work_claims(id,job_id,worker_id,candidate_hash,candidate_nonce,result_status,cpu_seconds,finished_at) "
+                        "values(%s,%s,%s,%s,%s,%s,%s,now())",
+                        (cid,job_id,body.worker_id,body.candidate_hash,body.candidate_nonce,body.result_status,accepted_cpu_seconds),
                     )
             except psycopg.errors.UniqueViolation:
                 duplicate=True
@@ -1968,6 +1996,7 @@ def claim(job_id: UUID, body: ClaimCreate, request: Request, token_worker_id: UU
                     "assignment_id":str(body.assignment_id),
                     "candidate_hash":body.candidate_hash,
                     "result_status":body.result_status,
+                    "candidate_nonce":body.candidate_nonce,
                     "cpu_seconds":accepted_cpu_seconds,
                 },
             )
@@ -2176,7 +2205,8 @@ def payout_worker_next(request: Request):
         with conn.cursor() as cur:
             cur.execute("select pg_advisory_xact_lock(58392017)")
             cur.execute(
-                "select id,account_id,amount_btc,payout_address,status from withdrawal_requests "
+                "select id,account_id,amount_btc,payout_address,status,payout_mode,puzzle_id,claim_id,claim_nonce,claim_hash,escrow_address,witness_script_hex "
+                "from withdrawal_requests "
                 "where status='QUEUED' or (status='PROCESSING' and processed_at is null and created_at < now() - (%s || ' minutes')::interval) "
                 "order by created_at asc limit 1 for update skip locked",
                 (PAYOUT_RETRY_AFTER_MINUTES,),
@@ -2184,7 +2214,7 @@ def payout_worker_next(request: Request):
             row=cur.fetchone()
             if not row:
                 return {"withdrawal":None}
-            wid,account_id,amount,address,status=row
+            wid,account_id,amount,address,status,payout_mode,puzzle_id,claim_id,claim_nonce,claim_hash,escrow_address,witness_script_hex=row
             amount=Decimal(str(amount))
             if amount > MAX_SINGLE_PAYOUT_BTC:
                 record_audit_event(cur,"WITHDRAWAL_BLOCKED","withdrawal",wid,account_id,
@@ -2216,10 +2246,14 @@ def payout_worker_next(request: Request):
                 return {"withdrawal":None}
             record_audit_event(cur,"WITHDRAWAL_PROCESSING","withdrawal",wid,account_id,
                 payload={"amount_btc":str(amount),"payout_address_present":True,
+                         "payout_mode":payout_mode,
                          "max_single_btc":str(MAX_SINGLE_PAYOUT_BTC),"max_daily_btc":str(MAX_DAILY_PAYOUT_BTC),
                          "custody":"none"})
             return {"withdrawal":{"id":str(wid),"account_id":str(account_id),"amount_btc":float(amount),
-                                  "payout_address":address,"status":"PROCESSING","idempotency_key":str(wid)}}
+                                  "payout_address":address,"status":"PROCESSING","idempotency_key":str(wid),
+                                  "payout_mode":payout_mode,"puzzle_id":puzzle_id,"claim_id":str(claim_id) if claim_id else None,
+                                  "claim_nonce":claim_nonce,"claim_hash":claim_hash,
+                                  "escrow_address":escrow_address,"witness_script_hex":witness_script_hex}}
 
 
 @app.post("/internal/payouts/{withdrawal_id}/complete")
@@ -2306,7 +2340,7 @@ def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(accoun
             if job[1] not in ("COMPLETED","RUNNING"):
                 raise HTTPException(409,f"Job is {job[1]}")
             cur.execute(
-                "select c.id,c.worker_id,c.candidate_hash,w.account_id "
+                "select c.id,c.worker_id,c.candidate_hash,c.candidate_nonce,w.account_id "
                 "from work_claims c join workers w on w.id=c.worker_id "
                 "where c.job_id=%s and c.result_status='TESTED' and w.account_id=%s "
                 "order by c.finished_at asc for update",
@@ -2315,7 +2349,7 @@ def verify_job(job_id: UUID, request: Request, account_id: UUID = Depends(accoun
             claims=cur.fetchall()
             if not claims:
                 raise HTTPException(404,"No TESTED claim is available for this account")
-            for claim_id,worker_id,candidate_hash,claimant_account in claims:
+            for claim_id,worker_id,candidate_hash,candidate_nonce,claimant_account in claims:
                 if claimant_account != account_id:
                     raise HTTPException(403,"Verified claim account mismatch")
                 result=auto_credit_verified_claim(cur,job_id,claim_id,worker_id,candidate_hash)
@@ -2337,7 +2371,7 @@ class RewardApprovalRequest(BaseModel):
 
 @app.post("/admin/rewards/{reward_id}/approve")
 def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends(account_id_from_auth)):
-    """Owner-only settlement gate: REVIEW -> APPROVED, then credit the worker balance."""
+    """Owner-only settlement gate: REVIEW -> APPROVED, then queue the real payout rail."""
     enforce_rate_limit(request, "write")
     payload={"reward_id":str(reward_id)}
     with db() as conn:
@@ -2347,8 +2381,10 @@ def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends
                 return replay
             require_owner(cur, account_id)
             cur.execute(
-                "select id,account_id,puzzle_id,worker_share_btc,platform_fee_btc,settlement_status,source_claim_id "
-                "from reward_events where id=%s for update",
+                "select r.id,r.account_id,r.puzzle_id,r.worker_share_btc,r.platform_fee_btc,r.settlement_status,r.source_claim_id,"
+                "c.payout,c.verification "
+                "from reward_events r join challenge_registry c on c.id=r.puzzle_id "
+                "where r.id=%s for update",
                 (reward_id,),
             )
             reward=cur.fetchone()
@@ -2358,6 +2394,35 @@ def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends
                 return {"reward_id":str(reward_id),"status":"APPROVED","already_approved":True}
             if reward[5] != "REVIEW":
                 raise HTTPException(409,f"Reward is {reward[5]}")
+
+            payout_meta=reward[7] if isinstance(reward[7],dict) else {}
+            verification_meta=reward[8] if isinstance(reward[8],dict) else {}
+            direct_escrow=str(payout_meta.get("mode","")).upper() == "DIRECT_PUBLIC_ESCROW"
+            claim_nonce=None
+            claim_hash=None
+            escrow_address=None
+            witness_script_hex=None
+            if direct_escrow:
+                if not reward[6]:
+                    raise HTTPException(409,"Direct escrow reward has no source claim")
+                cur.execute(
+                    "select candidate_nonce,candidate_hash from work_claims where id=%s for update",
+                    (reward[6],),
+                )
+                claim=cur.fetchone()
+                if not claim or claim[0] is None:
+                    raise HTTPException(409,"Direct escrow reward is missing the verified nonce")
+                claim_nonce=int(claim[0])
+                claim_hash=str(claim[1])
+                escrow_address=str(payout_meta.get("claim_target","")).strip()
+                witness_script_hex=str(verification_meta.get("witness_script_hex","")).strip()
+                if not escrow_address or not witness_script_hex:
+                    raise HTTPException(409,"Direct escrow metadata is incomplete")
+                # Bind the stored hash to the nonce again before queuing funds.
+                from challenge_adapters.bounded_escrow_preimage import digest as escrow_digest
+                if escrow_digest(reward[2],claim_nonce) != claim_hash.lower():
+                    raise HTTPException(409,"Verified claim does not match its stored nonce")
+
             cur.execute(
                 "update reward_events set settlement_status='APPROVED',approved_at=now() where id=%s and settlement_status='REVIEW'",
                 (reward_id,),
@@ -2377,19 +2442,23 @@ def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends
                 "on conflict(reward_event_id,entry_type) do nothing",
                 (uuid4(),beneficiary,reward_id,worker_share),
             )
-            cur.execute(
-                "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) "
-                "values(%s,%s,%s,'PLATFORM_FEE',%s,%s) on conflict(reward_event_id,entry_type) do nothing",
-                (uuid4(),beneficiary,reward_id,platform_fee,OWNER_PLATFORM_FEE_BTC_ADDRESS),
-            )
+            if platform_fee > 0:
+                cur.execute(
+                    "insert into reward_ledger(id,account_id,reward_event_id,entry_type,amount_btc,destination_btc_address) "
+                    "values(%s,%s,%s,'PLATFORM_FEE',%s,%s) on conflict(reward_event_id,entry_type) do nothing",
+                    (uuid4(),beneficiary,reward_id,platform_fee,OWNER_PLATFORM_FEE_BTC_ADDRESS),
+                )
             cur.execute("select btc_payout_address from accounts where id=%s for update",(beneficiary,))
             payout=cur.fetchone()
             withdrawal_queued=False
             if payout and payout[0]:
                 wid=uuid4()
                 cur.execute(
-                    "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status) values(%s,%s,%s,%s,'QUEUED')",
-                    (wid,beneficiary,worker_share,payout[0]),
+                    "insert into withdrawal_requests(id,account_id,amount_btc,payout_address,status,payout_mode,puzzle_id,claim_id,claim_nonce,claim_hash,escrow_address,witness_script_hex) "
+                    "values(%s,%s,%s,%s,'QUEUED',%s,%s,%s,%s,%s,%s,%s)",
+                    (wid,beneficiary,worker_share,payout[0],
+                     "DIRECT_PUBLIC_ESCROW" if direct_escrow else "PLATFORM_TREASURY",
+                     reward[2],reward[6],claim_nonce,claim_hash,escrow_address,witness_script_hex),
                 )
                 cur.execute(
                     "update reward_balances set available_btc=available_btc-%s,updated_at=now() "
@@ -2402,10 +2471,13 @@ def approve_reward(reward_id: UUID, request: Request, account_id: UUID = Depends
             record_audit_event(
                 cur,"REWARD_APPROVED","reward_event",reward_id,beneficiary,
                 payload={"worker_share_btc":str(worker_share),"platform_fee_btc":str(platform_fee),
-                         "withdrawal_queued":withdrawal_queued,"custody":"none"},
+                         "withdrawal_queued":withdrawal_queued,
+                         "payout_mode":"DIRECT_PUBLIC_ESCROW" if direct_escrow else "PLATFORM_TREASURY",
+                         "custody":"none"},
             )
             response={"reward_id":str(reward_id),"status":"APPROVED",
-                      "worker_credit_btc":worker_share,"withdrawal_queued":withdrawal_queued}
+                      "worker_credit_btc":worker_share,"withdrawal_queued":withdrawal_queued,
+                      "payout_mode":"DIRECT_PUBLIC_ESCROW" if direct_escrow else "PLATFORM_TREASURY"}
             idempotency_store(cur,account_id,request,payload,response)
             return response
 
