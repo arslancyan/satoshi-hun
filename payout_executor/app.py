@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
-from payout_executor.escrow import claim_escrow
+from escrow import claim_escrow
 from pydantic import BaseModel, Field
 
 APP_VERSION = "0.1.0"
