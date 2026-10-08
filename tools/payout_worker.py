@@ -40,7 +40,17 @@ def main():
                 "payout_address":withdrawal["payout_address"],
                 "idempotency_key":withdrawal["idempotency_key"],
             }
-            status, result=post(EXECUTOR_URL,payload,EXECUTOR_TOKEN,"Authorization")
+            if withdrawal.get("payout_mode") == "DIRECT_PUBLIC_ESCROW":
+                payload.update({
+                    "challenge_id": withdrawal.get("puzzle_id"),
+                    "claim_nonce": withdrawal.get("claim_nonce"),
+                    "escrow_address": withdrawal.get("escrow_address"),
+                    "witness_script_hex": withdrawal.get("witness_script_hex"),
+                })
+                endpoint=EXECUTOR_URL + "/escrow-payout"
+            else:
+                endpoint=EXECUTOR_URL + "/payout"
+            status, result=post(endpoint,payload,EXECUTOR_TOKEN,"Authorization")
             txid=str(result.get("txid","")).strip()
             if not txid:
                 raise RuntimeError("Payout executor returned no txid")
