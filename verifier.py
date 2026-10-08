@@ -132,13 +132,43 @@ register_adapter(HashCommitmentAdapter())
 register_adapter(PeterToddHashCollisionAdapter)
 
 
-def verify_candidate_hash(record, candidate_hash):
-    """Verify a worker-submitted candidate hash without receiving candidate material."""
+def verify_candidate_hash(record, candidate_hash, candidate_nonce=None):
+    """Verify a worker-submitted candidate hash.
+
+    Bounded P2WSH challenges additionally require the nonce so the server can
+    reconstruct the exact preimage and bind the claim to the funded escrow.
+    """
     normalized = normalize(record)
-    candidate_hash = str(candidate_hash)
+    candidate_hash = str(candidate_hash).lower()
     if not eligible(normalized):
         return VerificationResult(False, "Challenge is not fully verified for solver use.", candidate_hash).as_dict()
-    adapter = ADAPTERS.get(str(normalized.get("type", "unknown")))
+
+    challenge_type = str(normalized.get("type", "unknown"))
+    if challenge_type == "sha256-preimage-pow":
+        verification = normalized.get("verification") or {}
+        if candidate_nonce is None:
+            return VerificationResult(False, "Bounded preimage claims require a nonce.", candidate_hash).as_dict()
+        try:
+            from challenge_adapters.bounded_escrow_preimage import verify as verify_preimage
+            nonce = int(candidate_nonce)
+            result = verify_preimage(
+                normalized["id"],
+                int(verification.get("difficulty_bits", 0)),
+                nonce,
+                candidate_hash,
+                int(verification.get("max_nonce", -1)),
+            )
+            if not result.get("valid"):
+                return VerificationResult(False, str(result.get("reason", "proof_mismatch")), candidate_hash).as_dict()
+            return VerificationResult(
+                True,
+                "Verified by bounded P2WSH preimage adapter.",
+                candidate_hash,
+            ).as_dict()
+        except Exception as exc:
+            return VerificationResult(False, f"Verifier error: {type(exc).__name__}", candidate_hash).as_dict()
+
+    adapter = ADAPTERS.get(challenge_type)
     if not adapter:
         return VerificationResult(False, "No challenge-specific verifier registered.", candidate_hash).as_dict()
     try:
